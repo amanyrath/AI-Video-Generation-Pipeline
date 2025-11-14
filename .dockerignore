@@ -27,6 +27,7 @@ alexis-docs
 .idea
 *.swp
 *.swo
+*~
 
 # OS files
 .DS_Store
@@ -35,7 +36,17 @@ Thumbs.db
 # Testing
 coverage
 
+# Build artifacts
+*.tsbuildinfo
+build
+
+# Project-specific
+tmp
+public/uploads
+
 # Misc
 *.md
+*.pem
 .vercel
-tmp
+.pnp
+.pnp.js
