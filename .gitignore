@@ -28,9 +28,10 @@ config/credentials.yml.enc
 secrets.json
 credentials.json
 
-# Markdown files (except README.md)
+# Markdown files (except README.md and memory bank files)
 *.md
 !README.md
+!memory-bank/*.md
 
 # OS files
 .DS_Store
