@@ -1,14 +1,20 @@
 FROM node:18-alpine
 
-# Install FFmpeg (this is automatic on Railway!)
+# Install FFmpeg
 RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
-RUN npm ci --only=production
 
+# Install dependencies
+RUN npm ci
+
+# Copy application code
 COPY . .
+
+# Build the app
 RUN npm run build
 
 EXPOSE 3000
