@@ -34,15 +34,8 @@ export default function StartingScreen({
         }
       }
 
-      // Create project in store
+      // Create project in store (this already adds the user message)
       createProjectInStore(message, targetDuration);
-
-      // Add user message to chat
-      addChatMessage({
-        role: 'user',
-        content: message,
-        type: 'message',
-      });
 
       // Add agent message
       addChatMessage({
