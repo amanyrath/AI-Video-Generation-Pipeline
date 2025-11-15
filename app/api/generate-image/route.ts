@@ -16,6 +16,8 @@ import {
   setRuntimeImageModel,
 } from '@/lib/ai/image-generator';
 import { ImageGenerationRequest, ImageGenerationResponse } from '@/lib/types';
+import { uploadToS3, getS3Url } from '@/lib/storage/s3-uploader';
+import path from 'path';
 
 // ============================================================================
 // Prompt Adjustment for Reference Images
@@ -181,10 +183,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Apply runtime model override if provided
-    // Use I2I model if we have reference images, otherwise use T2I model
+    // Extract scene index for scene-based model selection
+    const sceneIndex = body.sceneIndex;
+
+    // Scene-based model selection
+    // Scene 0: Use Gen-4 Image for maximum consistency with reference image (matches video generation strategy)
+    // Scenes 1-4: Use runtime override or default I2I model
     const hasReferenceImages = body.referenceImageUrls && body.referenceImageUrls.length > 0;
-    const selectedModel = hasReferenceImages ? runtimeI2IModel : runtimeT2IModel;
+    let selectedModel = hasReferenceImages ? runtimeI2IModel : runtimeT2IModel;
+    
+    if (!selectedModel) {
+      if (sceneIndex === 0 && hasReferenceImages) {
+        // Scene 0 with reference images: Use Gen-4 Image for maximum object consistency
+        selectedModel = 'runwayml/gen4-image';
+        console.log('[Image Generation API] Scene 0: Using Gen-4 Image for maximum consistency with reference image');
+      } else if (hasReferenceImages) {
+        // Scenes 1-4 with reference images: Use default I2I model (FLUX Dev)
+        selectedModel = undefined; // Will use default from config
+        console.log(`[Image Generation API] Scene ${sceneIndex}: Using default I2I model (FLUX Dev with IP-Adapter)`);
+      } else {
+        // No reference images: Use T2I model
+        selectedModel = runtimeT2IModel;
+        console.log(`[Image Generation API] Scene ${sceneIndex}: Using T2I model (no reference images)`);
+      }
+    }
 
     if (selectedModel) {
       setRuntimeImageModel(selectedModel);
@@ -205,34 +227,85 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Extract parameters
+    // Extract parameters (sceneIndex already extracted above)
     let prompt = body.prompt.trim();
     const projectId = body.projectId.trim();
-    const sceneIndex = body.sceneIndex;
     let seedImage = body.seedImage?.trim();
     let referenceImageUrls = body.referenceImageUrls || [];
     const seedFrame = body.seedFrame?.trim(); // Seed frame for IP-Adapter (scenes 1-4)
 
-    // ACTION 1: Verify and convert reference image URLs to publicly accessible URLs
-    // Replicate requires HTTP/HTTPS URLs, not local file paths
-    const ngrokUrl = process.env.NGROK_URL || 'http://localhost:3000';
-    referenceImageUrls = referenceImageUrls.map(url => {
-      // If it's already a public URL, use it as-is
-      if (url.startsWith('http://') || url.startsWith('https://')) {
+    // ACTION 1: Verify and convert all image URLs to publicly accessible URLs
+    // Replicate requires HTTP/HTTPS URLs that are publicly accessible (not localhost)
+    // We need to upload local images to S3 or use ngrok/public URL
+    
+    // Helper function to convert local paths to public URLs (S3 or public URL)
+    const convertToPublicUrl = async (url: string): Promise<string> => {
+      // If it's already a public URL (S3 or external), use it as-is
+      if (url.startsWith('https://') || (url.startsWith('http://') && !url.includes('localhost'))) {
         return url;
       }
-      // If it's a local path, convert to serveable URL
-      if (url.startsWith('/tmp') || url.startsWith('./') || !url.startsWith('/api')) {
-        const publicUrl = `${ngrokUrl}/api/serve-image?path=${encodeURIComponent(url)}`;
-        console.log(`[Image Generation API] Converted local path to public URL: ${url.substring(0, 50)}... -> ${publicUrl.substring(0, 80)}...`);
+      
+      // If it's a local path, try to upload to S3 first, fallback to ngrok/public URL
+      if (url.startsWith('/tmp') || url.startsWith('./') || (!url.startsWith('/api') && !url.startsWith('http'))) {
+        try {
+          // Determine content type from file extension
+          const ext = path.extname(url).toLowerCase();
+          const contentType = 
+            ext === '.png' ? 'image/png' :
+            ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+            ext === '.gif' ? 'image/gif' :
+            ext === '.webp' ? 'image/webp' :
+            'image/png'; // Default to PNG
+          
+          // Try to upload to S3
+          const s3Key = await uploadToS3(url, projectId, {
+            contentType,
+          });
+          const s3Url = getS3Url(s3Key);
+          console.log(`[Image Generation API] Uploaded to S3: ${url.substring(0, 50)}... -> ${s3Url.substring(0, 80)}...`);
+          return s3Url;
+        } catch (s3Error: any) {
+          // If S3 upload fails, use ngrok/public URL as fallback
+          // Note: This will only work if ngrok is configured and running
+          const ngrokUrl = process.env.NGROK_URL || 'http://localhost:3000';
+          const publicUrl = `${ngrokUrl}/api/serve-image?path=${encodeURIComponent(url)}`;
+          console.warn(`[Image Generation API] S3 upload failed, using public URL (may not work if not publicly accessible): ${url.substring(0, 50)}... -> ${publicUrl.substring(0, 80)}...`);
+          console.warn(`[Image Generation API] S3 error: ${s3Error.message}`);
+          return publicUrl;
+        }
+      }
+      
+      // If it's already a relative API path, make it absolute (but warn if localhost)
+      if (url.startsWith('/api/')) {
+        const ngrokUrl = process.env.NGROK_URL || 'http://localhost:3000';
+        const publicUrl = `${ngrokUrl}${url}`;
+        if (publicUrl.includes('localhost')) {
+          console.warn(`[Image Generation API] WARNING: Using localhost URL - Replicate may not be able to access it: ${publicUrl}`);
+        }
         return publicUrl;
       }
-      // If it's already a relative API path, make it absolute
-      if (url.startsWith('/api/')) {
-        return `${ngrokUrl}${url}`;
-      }
+      
       return url;
-    });
+    };
+
+    // Convert reference image URLs (async - need to await)
+    const convertedReferenceUrls = await Promise.all(
+      referenceImageUrls.map(url => convertToPublicUrl(url))
+    );
+    referenceImageUrls = convertedReferenceUrls;
+    
+    // Convert seed image URL if provided
+    if (seedImage) {
+      seedImage = await convertToPublicUrl(seedImage);
+      console.log(`[Image Generation API] Converted seed image URL: ${seedImage.substring(0, 80)}...`);
+    }
+    
+    // Convert seed frame URL if provided
+    let seedFrameUrl: string | undefined = seedFrame;
+    if (seedFrame) {
+      seedFrameUrl = await convertToPublicUrl(seedFrame);
+      console.log(`[Image Generation API] Converted seed frame URL: ${seedFrameUrl.substring(0, 80)}...`);
+    }
 
     // Log URL verification
     const allUrlsPublic = referenceImageUrls.every(url => 
@@ -276,7 +349,7 @@ export async function POST(request: NextRequest) {
     console.log('[Image Generation API] Strategy:', strategy);
     console.log('[Image Generation API] Inputs:');
     console.log('[Image Generation API]   - Seed Image:', seedImage || 'none');
-    console.log('[Image Generation API]   - Seed Frame:', seedFrame || 'none');
+    console.log('[Image Generation API]   - Seed Frame:', seedFrameUrl || 'none');
     console.log('[Image Generation API]   - Reference Images:', referenceImageUrls.length);
     if (referenceImageUrls.length > 0) {
       referenceImageUrls.forEach((url, idx) => {
@@ -310,8 +383,8 @@ export async function POST(request: NextRequest) {
     }
     
     // For Scenes 1-4: Add seed frame for visual continuity (secondary)
-    if (sceneIndex > 0 && seedFrame) {
-      ipAdapterImages.push(seedFrame);
+    if (sceneIndex > 0 && seedFrameUrl) {
+      ipAdapterImages.push(seedFrameUrl);
       console.log(`[Image Generation API] Scene ${sceneIndex}: Using seed frame via IP-Adapter for visual continuity`);
     }
     

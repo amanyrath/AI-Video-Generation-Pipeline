@@ -8,7 +8,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { saveUploadedImage } from '@/lib/storage/image-storage';
+import { saveUploadedImage, ProcessedImage } from '@/lib/storage/image-storage';
+import { removeBackgroundIterative } from '@/lib/ai/background-remover';
+import fs from 'fs/promises';
+import { v4 as uuidv4 } from 'uuid';
+import { DEFAULT_RUNTIME_CONFIG } from '@/lib/config/model-runtime';
 
 // ============================================================================
 // Request Validation
@@ -111,10 +115,17 @@ export async function POST(request: NextRequest) {
     // Extract parameters
     const projectId = formData.get('projectId') as string;
     const imageFiles = formData.getAll('images') as File[];
+    
+    // Check if background removal is enabled (from form data or default to true)
+    const enableBgRemovalParam = formData.get('enableBackgroundRemoval');
+    const enableBackgroundRemoval = enableBgRemovalParam === null 
+      ? DEFAULT_RUNTIME_CONFIG.enableBackgroundRemoval !== false // Default to true if not specified
+      : enableBgRemovalParam === 'true' || enableBgRemovalParam === '1';
 
     console.log('[Upload Images API] Request received:', {
       projectId,
       imageCount: imageFiles.length,
+      enableBackgroundRemoval,
     });
 
     // Process each image
@@ -128,7 +139,7 @@ export async function POST(request: NextRequest) {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
 
-        // Save image
+        // Save original image
         const uploadedImage = await saveUploadedImage(
           buffer,
           file.name,
@@ -139,8 +150,53 @@ export async function POST(request: NextRequest) {
           }
         );
 
-        uploadedImages.push(uploadedImage);
         console.log(`[Upload Images API] Successfully uploaded image ${i + 1}/${imageFiles.length}: ${uploadedImage.id}`);
+
+        // Process image through background removal (2 iterations) if enabled
+        if (enableBackgroundRemoval) {
+          try {
+            console.log(`[Upload Images API] Starting background removal for image ${i + 1}...`);
+            const processedPaths = await removeBackgroundIterative(
+              uploadedImage.localPath,
+              2 // 2 iterations
+            );
+
+          // Create ProcessedImage objects for each iteration
+          const processedVersions: ProcessedImage[] = [];
+          for (let iter = 0; iter < processedPaths.length; iter++) {
+            const processedPath = processedPaths[iter];
+            
+            // Get file stats
+            const stats = await fs.stat(processedPath);
+
+            const processedImage: ProcessedImage = {
+              id: uuidv4(),
+              iteration: iter + 1,
+              url: processedPath, // Local path for now
+              localPath: processedPath,
+              size: stats.size,
+              createdAt: new Date().toISOString(),
+            };
+
+            processedVersions.push(processedImage);
+            console.log(`[Upload Images API] Created processed version ${iter + 1}/2 for image ${i + 1}`);
+          }
+
+            // Attach processed versions to uploaded image
+            uploadedImage.processedVersions = processedVersions;
+            console.log(`[Upload Images API] Background removal completed for image ${i + 1} (${processedVersions.length} versions)`);
+          } catch (bgError: any) {
+            const bgErrorMessage = bgError.message || 'Unknown error';
+            console.error(`[Upload Images API] Background removal failed for image ${i + 1}:`, bgErrorMessage);
+            // Don't fail the upload if background removal fails - just log it
+            // The original image will still be available
+            errors.push(`Image "${file.name}" background removal: ${bgErrorMessage}`);
+          }
+        } else {
+          console.log(`[Upload Images API] Background removal disabled, skipping for image ${i + 1}`);
+        }
+
+        uploadedImages.push(uploadedImage);
       } catch (error: any) {
         const errorMessage = error.message || 'Unknown error';
         console.error(`[Upload Images API] Failed to upload image ${i + 1} (${file.name}):`, errorMessage);

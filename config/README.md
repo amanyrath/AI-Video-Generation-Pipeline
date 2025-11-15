@@ -28,7 +28,9 @@ Configuration for AI models used in image and video generation.
 ```
 
 **Available Models:**
-- `black-forest-labs/flux-1.1-pro` - Highest quality (recommended)
+- `runwayml/gen4-image` - Maximum consistency with reference images, best for Scene 0 (automatically used)
+- `runwayml/gen4-image-turbo` - Fast Gen-4 image generation with good consistency
+- `black-forest-labs/flux-1.1-pro` - Highest quality (recommended for Scenes 1-4)
 - `black-forest-labs/flux-dev` - Good quality, faster
 - `black-forest-labs/flux-schnell` - Fastest, lower quality
 
@@ -45,8 +47,10 @@ Configuration for AI models used in image and video generation.
 ```
 
 **Available Models:**
-- `wan-video/wan-2.5-i2v-fast` - Latest WAN model (recommended)
+- `wan-video/wan-2.5-i2v-fast` - Latest WAN model (recommended for Scenes 1-4)
 - `wan-video/wan-2.2-i2v-fast` - Stable, good quality
+- `runwayml/gen4-aleph` - Maximum consistency, best for Scene 0→1 transitions
+- `runwayml/gen4-turbo` - Fast Gen-4 generation with good consistency
 - `luma/ray` - Alternative style
 
 **Duration:** 5 or 10 seconds (WAN models)
@@ -84,6 +88,22 @@ Configuration for AI models used in image and video generation.
   }
 }
 ```
+
+### Use Runway Gen-4 for Scene 0
+
+```json
+{
+  "video": {
+    "model": "runwayml/gen4-aleph"
+  }
+}
+```
+
+**Note:** The system automatically uses:
+- **Gen-4 Image** for Scene 0 image generation (maximum consistency with reference image)
+- **Gen-4 Aleph** for Scene 0→1 video transitions (maximum consistency)
+
+You can override these via the DevPanel or environment variables.
 
 ## Notes
 

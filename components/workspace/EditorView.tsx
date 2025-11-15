@@ -267,14 +267,61 @@ export default function EditorView() {
   };
 
   const handleGenerateVideo = async () => {
-    if (!project?.id || !selectedImage) return;
+    if (!project?.id) return;
 
     setIsGeneratingVideo(true);
     try {
       setSceneStatus(currentSceneIndex, 'generating_video');
 
-      // Upload selected image to S3 first
-      const { s3Url } = await uploadImageToS3(selectedImage.localPath, project.id);
+      // For Scene 0: Use reference image directly (if available) for maximum consistency
+      // For Scenes 1-4: Use selected generated image
+      let imageToUse: string | undefined;
+      
+      if (currentSceneIndex === 0) {
+        // Scene 0: Use reference image directly for video generation
+        // This ensures the video looks like the input reference image
+        const referenceImageUrls = project.referenceImageUrls || [];
+        if (referenceImageUrls.length > 0) {
+          // Use the reference image (should be cleaned/background-removed)
+          // Reference image might be a URL or local path - handle both
+          const refImage = referenceImageUrls[0];
+          if (refImage.startsWith('http://') || refImage.startsWith('https://')) {
+            // Already a URL, use it directly
+            imageToUse = refImage;
+            console.log('[EditorView] Scene 0: Using reference image URL directly for video generation');
+          } else {
+            // Local path, will be uploaded to S3
+            imageToUse = refImage;
+            console.log('[EditorView] Scene 0: Using reference image (local path) for video generation - will upload to S3');
+          }
+        } else if (selectedImage) {
+          // Fallback to generated image if no reference image
+          imageToUse = selectedImage.localPath;
+          console.warn('[EditorView] Scene 0: No reference image available, using generated image as fallback');
+        } else {
+          throw new Error('No image available for video generation. Please upload a reference image or generate an image first.');
+        }
+      } else {
+        // Scenes 1-4: Use selected generated image
+        if (!selectedImage) {
+          throw new Error('Please select an image first');
+        }
+        imageToUse = selectedImage.localPath;
+        console.log(`[EditorView] Scene ${currentSceneIndex}: Using selected generated image for video generation`);
+      }
+
+      // Upload image to S3 if it's a local path, otherwise use the URL directly
+      let s3Url: string;
+      if (imageToUse.startsWith('http://') || imageToUse.startsWith('https://')) {
+        // Already a public URL, use it directly
+        s3Url = imageToUse;
+        console.log('[EditorView] Image is already a public URL, using directly:', s3Url.substring(0, 80) + '...');
+      } else {
+        // Local path, upload to S3
+        const uploadResult = await uploadImageToS3(imageToUse, project.id);
+        s3Url = uploadResult.s3Url;
+        console.log('[EditorView] Uploaded image to S3:', s3Url.substring(0, 80) + '...');
+      }
 
       // Get seed frame from previous scene (if not Scene 0)
       let seedFrameUrl: string | undefined;

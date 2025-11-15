@@ -21,7 +21,7 @@
   },
   "_comments": {
     "image": {
-      "model": "Options: 'black-forest-labs/flux-schnell' (fastest, recommended), 'black-forest-labs/flux-dev', 'black-forest-labs/flux-1.1-pro'",
+      "model": "Options: 'black-forest-labs/flux-schnell' (fastest, recommended), 'black-forest-labs/flux-dev', 'black-forest-labs/flux-1.1-pro', 'runwayml/gen4-image' (Scene 0 consistency), 'runwayml/gen4-image-turbo'",
       "aspectRatio": "Image aspect ratio (e.g., '16:9', '1:1', '4:3')",
       "outputFormat": "Output format: 'png', 'jpg', 'webp'",
       "outputQuality": "Quality: 1-100",
@@ -30,8 +30,8 @@
       "maxRetries": "Number of retry attempts on failure"
     },
     "video": {
-      "model": "Options: 'wan-video/wan-2.5-i2v-fast' (recommended), 'wan-video/wan-2.2-i2v-fast', 'luma/ray'",
-      "duration": "Duration in seconds (5 or 10 for WAN models)",
+      "model": "Options: 'wan-video/wan-2.5-i2v-fast' (recommended), 'wan-video/wan-2.2-i2v-fast', 'runwayml/gen4-aleph' (Scene 0→1), 'runwayml/gen4-turbo', 'luma/ray'",
+      "duration": "Duration in seconds (5 or 10 for WAN models, varies for Gen-4)",
       "resolution": "Resolution: '720p', '1080p', or '4K'",
       "pollInterval": "Polling interval in milliseconds",
       "pollTimeout": "Maximum time to wait for generation in milliseconds",

@@ -91,7 +91,8 @@ export interface ProjectState {
   
   finalVideoUrl?: string;
   finalVideoS3Key?: string;
-  referenceImageUrls?: string[]; // Optional: URLs of uploaded reference images for object consistency
+  referenceImageUrls?: string[]; // Optional: URLs of uploaded reference images for object consistency (backward compatibility)
+  uploadedImages?: Array<import('./storage/image-storage').UploadedImage>; // Full uploaded image objects with processed versions
 }
 
 // Extended Scene type for project state (includes generation state)

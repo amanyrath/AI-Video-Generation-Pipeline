@@ -668,10 +668,17 @@ export default function LeftPanel({ onCollapse }: LeftPanelProps) {
           content: `Uploading ${images.length} image(s)...`,
           type: 'status',
         });
-        await uploadImages(images, project.id);
+        const uploadResult = await uploadImages(images, project.id);
+        
+        // Store full uploaded image objects in project state
+        if (uploadResult.images) {
+          const { setUploadedImages } = useProjectStore.getState();
+          setUploadedImages(uploadResult.images);
+        }
+        
         addChatMessage({
           role: 'agent',
-          content: `✓ ${images.length} image(s) uploaded successfully`,
+          content: `✓ ${images.length} image(s) uploaded successfully (with ${uploadResult.images?.reduce((sum, img) => sum + (img.processedVersions?.length || 0), 0) || 0} processed versions)`,
           type: 'status',
         });
       } catch (err) {

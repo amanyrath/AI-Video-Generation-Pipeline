@@ -133,8 +133,21 @@ export const AVAILABLE_T2I_MODELS: ModelOption[] = [
 /**
  * Image-to-Image (I2I) Models
  * Note: Currently using T2I models with IP-Adapter for I2I functionality
+ * Runway Gen-4 Image models use reference_images parameter (not IP-Adapter)
  */
 export const AVAILABLE_I2I_MODELS: ModelOption[] = [
+  {
+    id: 'runwayml/gen4-image',
+    name: 'Runway Gen-4 Image',
+    provider: 'Runway',
+    description: 'Maximum consistency with reference images, best for Scene 0',
+  },
+  {
+    id: 'runwayml/gen4-image-turbo',
+    name: 'Runway Gen-4 Image Turbo',
+    provider: 'Runway',
+    description: 'Fast Gen-4 image generation with good consistency',
+  },
   {
     id: 'black-forest-labs/flux-1.1-pro',
     name: 'FLUX 1.1 Pro (IP-Adapter)',
@@ -250,6 +263,18 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
     description: 'Fast creative generation',
   },
   {
+    id: 'runwayml/gen4-aleph',
+    name: 'Runway Gen-4 Aleph',
+    provider: 'Runway',
+    description: 'Maximum consistency, best for Scene 0→1 transitions',
+  },
+  {
+    id: 'runwayml/gen4-turbo',
+    name: 'Runway Gen-4 Turbo',
+    provider: 'Runway',
+    description: 'Fast Gen-4 generation with good consistency',
+  },
+  {
     id: 'stability-ai/stable-video-diffusion',
     name: 'Stable Video Diffusion',
     provider: 'Stability AI',
@@ -319,6 +344,15 @@ function resolveVideoModel(envModel?: string): string {
     return 'luma/ray';
   }
 
+  // Runway Gen-4 aliases
+  if (normalized === 'gen4' || normalized === 'gen4-aleph' || normalized === 'runway-gen4') {
+    return 'runwayml/gen4-aleph';
+  }
+
+  if (normalized === 'gen4-turbo' || normalized === 'runway-gen4-turbo') {
+    return 'runwayml/gen4-turbo';
+  }
+
   // Return as-is if it's already a full identifier
   return envModel;
 }
@@ -361,6 +395,9 @@ export const MODEL_INFO = {
 } as const;
 
 function getVideoModelName(model: string): string {
+  if (model.includes('gen4-aleph')) return 'Runway Gen-4 Aleph';
+  if (model.includes('gen4-turbo')) return 'Runway Gen-4 Turbo';
+  if (model.includes('gen4')) return 'Runway Gen-4';
   if (model.includes('wan-2.5')) return 'WAN 2.5 (i2v-fast)';
   if (model.includes('wan-2.2')) return 'WAN 2.2 (i2v-fast)';
   if (model.includes('veo-3.1-fast')) return 'Google Veo 3.1 Fast';
@@ -383,7 +420,7 @@ function getVideoModelName(model: string): string {
  *
  * Video Generation:
  * - REPLICATE_VIDEO_MODEL: Model identifier or alias (default: wan2.2)
- *   Aliases: wan2.5, wan2.2, veo, veo-fast, luma, ray
+ *   Aliases: wan2.5, wan2.2, veo, veo-fast, luma, ray, gen4, gen4-turbo
  * - VIDEO_DURATION: Duration in seconds (default: 5, supports 5 or 10 for WAN)
  * - VIDEO_RESOLUTION: Resolution (default: 720p, supports 720p, 1080p, 4K)
  *

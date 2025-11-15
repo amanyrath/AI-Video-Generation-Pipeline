@@ -12,7 +12,12 @@ This directory contains centralized configuration for all AI models used in the 
 
 ```bash
 # Image model (default: black-forest-labs/flux-1.1-pro)
+# Scene 0 automatically uses runwayml/gen4-image for maximum consistency
 REPLICATE_IMAGE_MODEL=black-forest-labs/flux-1.1-pro
+
+# Image-to-Image (I2I) models for reference-based generation
+# Options: runwayml/gen4-image (Scene 0), runwayml/gen4-image-turbo, 
+#          black-forest-labs/flux-dev (default for Scenes 1-4)
 ```
 
 ### Video Generation
@@ -25,6 +30,8 @@ REPLICATE_VIDEO_MODEL=wan2.5
 # - wan2.5, wan-2.5 → wan-video/wan-2.5-i2v-fast
 # - wan2.2, wan-2.2 → wan-video/wan-2.2-i2v-fast
 # - wan2.1, wan-2.1 → wan-video/wan-2.1-i2v-fast
+# - gen4, gen4-aleph, runway-gen4 → runwayml/gen4-aleph (best for Scene 0→1)
+# - gen4-turbo, runway-gen4-turbo → runwayml/gen4-turbo
 # - luma, ray → luma/ray
 
 # Video settings
@@ -35,12 +42,13 @@ VIDEO_RESOLUTION=720p   # 720p, 1080p, or 4K
 ## Current Configuration
 
 ### Image Generation
-- **Model**: FLUX 1.1 Pro
-- **Provider**: Black Forest Labs
-- **Type**: Text-to-image
+- **Model**: FLUX 1.1 Pro (default), Runway Gen-4 Image (Scene 0)
+- **Provider**: Black Forest Labs / Runway
+- **Type**: Text-to-image, Image-to-image with reference images
 - **Aspect Ratio**: 16:9
 - **Output Format**: PNG
 - **Quality**: 90
+- **Scene 0**: Automatically uses Runway Gen-4 Image for maximum consistency with reference image
 
 ### Video Generation
 - **Model**: WAN 2.5 (i2v-fast) - default

@@ -52,9 +52,16 @@ export default function StartingScreen({
           });
           const uploadResult = await uploadImages(images, projectId);
           referenceImageUrls = uploadResult.urls || [];
+          
+          // Store full uploaded image objects in project state
+          if (uploadResult.images) {
+            const { setUploadedImages } = useProjectStore.getState();
+            setUploadedImages(uploadResult.images);
+          }
+          
           addChatMessage({
             role: 'agent',
-            content: `✓ ${uploadResult.urls.length} image(s) uploaded successfully`,
+            content: `✓ ${uploadResult.urls.length} image(s) uploaded successfully (with ${uploadResult.images?.reduce((sum, img) => sum + (img.processedVersions?.length || 0), 0) || 0} processed versions)`,
             type: 'status',
           });
         } catch (err) {

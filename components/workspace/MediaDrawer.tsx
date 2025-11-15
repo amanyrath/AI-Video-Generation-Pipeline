@@ -133,7 +133,55 @@ export default function MediaDrawer() {
     return allFrames;
   }, [scenes]);
 
-  const uploadedMedia: MediaItem[] = []; // TODO: Get from project state when available
+  const uploadedMedia: MediaItem[] = useMemo(() => {
+    const allMedia: MediaItem[] = [];
+    
+    // Get uploaded images from project state
+    if (project?.uploadedImages) {
+      project.uploadedImages.forEach((uploadedImage) => {
+        // Add original image
+        let imageUrl = uploadedImage.url;
+        if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {
+          imageUrl = `/api/serve-image?path=${encodeURIComponent(uploadedImage.localPath || uploadedImage.url)}`;
+        }
+        
+        allMedia.push({
+          id: uploadedImage.id,
+          type: 'image' as const,
+          url: imageUrl,
+          timestamp: uploadedImage.createdAt,
+          metadata: {
+            originalName: uploadedImage.originalName,
+            iteration: 0, // Original
+          },
+        });
+
+        // Add processed versions (background-removed iterations)
+        if (uploadedImage.processedVersions) {
+          uploadedImage.processedVersions.forEach((processed) => {
+            let processedUrl = processed.url;
+            if (!processedUrl.startsWith('http://') && !processedUrl.startsWith('https://') && !processedUrl.startsWith('/api')) {
+              processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.localPath || processed.url)}`;
+            }
+            
+            allMedia.push({
+              id: processed.id,
+              type: 'image' as const,
+              url: processedUrl,
+              timestamp: processed.createdAt,
+              metadata: {
+                originalName: uploadedImage.originalName,
+                iteration: processed.iteration,
+                parentId: uploadedImage.id,
+              },
+            });
+          });
+        }
+      });
+    }
+    
+    return allMedia;
+  }, [project?.uploadedImages]);
   const finalVideo = project?.finalVideoUrl;
 
   // Drag and drop handler
@@ -299,6 +347,13 @@ export default function MediaDrawer() {
         {item.sceneIndex !== undefined && (
           <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 text-white text-xs rounded">
             Scene {item.sceneIndex + 1}
+          </div>
+        )}
+
+        {/* Iteration Badge (for processed images) */}
+        {item.metadata?.iteration !== undefined && (
+          <div className="absolute top-2 left-2 px-2 py-1 bg-purple-600 text-white text-xs rounded font-semibold">
+            {item.metadata.iteration === 0 ? 'Original' : `Iteration ${item.metadata.iteration}`}
           </div>
         )}
 

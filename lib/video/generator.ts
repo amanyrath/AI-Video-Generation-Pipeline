@@ -53,8 +53,10 @@ interface ReplicateInput {
   duration?: number; // Optional: Duration of the generated video in seconds
   resolution?: string; // Optional: Video resolution (e.g., '720p')
   negative_prompt?: string; // Optional: Text to specify elements to avoid
-  enable_prompt_expansion?: boolean; // Optional: Enable prompt optimization
+  enable_prompt_expansion?: boolean; // Optional: Enable prompt optimization (WAN models)
   seed?: number; // Optional: Random seed for reproducible generation
+  reference_images?: string[]; // Optional: Reference images for Gen-4 (for character/object consistency)
+  [key: string]: any; // Allow additional model-specific parameters
 }
 
 // ============================================================================
@@ -133,12 +135,27 @@ export async function createVideoPrediction(
   // For Scene 1-4: use seedFrame if provided, otherwise use imageUrl
   const inputImageUrl = seedFrame || imageUrl;
 
+  // Model-specific parameter handling
+  // Gen-4 models may have different parameter names/requirements than WAN models
+  const isGen4 = REPLICATE_MODEL.includes('gen4');
+  
   const input: ReplicateInput = {
-    image: inputImageUrl, // wan-video uses 'image' parameter instead of 'start_image_url'
+    image: inputImageUrl,
     prompt: prompt.trim(),
-    duration: VIDEO_DURATION,
-    resolution: VIDEO_RESOLUTION, // wan-video uses 'resolution' instead of 'aspect_ratio'
-    enable_prompt_expansion: true, // Enable prompt optimization for better results
+    // WAN models use 'duration' and 'resolution'
+    // Gen-4 models may use different parameters - adjust if needed
+    ...(isGen4 ? {
+      // Gen-4 specific parameters (adjust based on actual API requirements)
+      // Note: Gen-4 may use 'duration' and 'resolution' or different names
+      // If Gen-4 has different requirements, update here
+      duration: VIDEO_DURATION,
+      resolution: VIDEO_RESOLUTION,
+    } : {
+      // WAN model parameters
+      duration: VIDEO_DURATION,
+      resolution: VIDEO_RESOLUTION,
+      enable_prompt_expansion: true, // WAN-specific: Enable prompt optimization
+    }),
   };
 
   try {
