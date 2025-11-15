@@ -33,16 +33,46 @@ export const AVAILABLE_TEXT_MODELS: ModelOption[] = [
     description: 'Fast and cost-effective (default)',
   },
   {
+    id: 'openai/gpt-4-turbo',
+    name: 'GPT-4 Turbo',
+    provider: 'OpenAI',
+    description: 'Previous generation flagship model',
+  },
+  {
     id: 'anthropic/claude-3.5-sonnet',
     name: 'Claude 3.5 Sonnet',
     provider: 'Anthropic',
     description: 'Strong reasoning and creative writing',
   },
   {
+    id: 'anthropic/claude-3-opus',
+    name: 'Claude 3 Opus',
+    provider: 'Anthropic',
+    description: 'Most capable Claude model',
+  },
+  {
     id: 'anthropic/claude-3-haiku',
     name: 'Claude 3 Haiku',
     provider: 'Anthropic',
     description: 'Fast and efficient',
+  },
+  {
+    id: 'google/gemini-pro-1.5',
+    name: 'Gemini Pro 1.5',
+    provider: 'Google',
+    description: 'Large context window',
+  },
+  {
+    id: 'meta-llama/llama-3.1-70b-instruct',
+    name: 'Llama 3.1 70B',
+    provider: 'Meta',
+    description: 'Open-source, high performance',
+  },
+  {
+    id: 'mistralai/mistral-large',
+    name: 'Mistral Large',
+    provider: 'Mistral AI',
+    description: 'European AI powerhouse',
   },
 ];
 
@@ -54,7 +84,7 @@ export const AVAILABLE_T2I_MODELS: ModelOption[] = [
     id: 'black-forest-labs/flux-1.1-pro',
     name: 'FLUX 1.1 Pro',
     provider: 'Black Forest Labs',
-    description: 'Highest quality, photorealistic (default)',
+    description: 'Highest quality, photorealistic',
   },
   {
     id: 'black-forest-labs/flux-dev',
@@ -66,13 +96,37 @@ export const AVAILABLE_T2I_MODELS: ModelOption[] = [
     id: 'black-forest-labs/flux-schnell',
     name: 'FLUX Schnell',
     provider: 'Black Forest Labs',
-    description: 'Fast generation, lower quality',
+    description: 'Fast and reliable (default)',
+  },
+  {
+    id: 'black-forest-labs/flux-pro',
+    name: 'FLUX Pro',
+    provider: 'Black Forest Labs',
+    description: 'Professional quality generation',
   },
   {
     id: 'stability-ai/sdxl',
     name: 'Stable Diffusion XL',
     provider: 'Stability AI',
     description: 'Versatile open-source model',
+  },
+  {
+    id: 'stability-ai/sd3-medium',
+    name: 'Stable Diffusion 3 Medium',
+    provider: 'Stability AI',
+    description: 'Latest SD3 architecture',
+  },
+  {
+    id: 'ideogram-ai/ideogram-v2',
+    name: 'Ideogram V2',
+    provider: 'Ideogram',
+    description: 'Excellent text rendering',
+  },
+  {
+    id: 'recraft-ai/recraft-v3',
+    name: 'Recraft V3',
+    provider: 'Recraft',
+    description: 'High-quality vector-style images',
   },
 ];
 
@@ -85,7 +139,7 @@ export const AVAILABLE_I2I_MODELS: ModelOption[] = [
     id: 'black-forest-labs/flux-1.1-pro',
     name: 'FLUX 1.1 Pro (IP-Adapter)',
     provider: 'Black Forest Labs',
-    description: 'Best quality with reference images (default)',
+    description: 'Best quality with reference images',
   },
   {
     id: 'black-forest-labs/flux-kontext-pro',
@@ -97,13 +151,31 @@ export const AVAILABLE_I2I_MODELS: ModelOption[] = [
     id: 'black-forest-labs/flux-dev',
     name: 'FLUX Dev (IP-Adapter)',
     provider: 'Black Forest Labs',
-    description: 'Open-weight with reference support',
+    description: 'Open-weight with reference support (default)',
+  },
+  {
+    id: 'black-forest-labs/flux-schnell',
+    name: 'FLUX Schnell (IP-Adapter)',
+    provider: 'Black Forest Labs',
+    description: 'Fast reference-based generation',
+  },
+  {
+    id: 'black-forest-labs/flux-pro',
+    name: 'FLUX Pro (IP-Adapter)',
+    provider: 'Black Forest Labs',
+    description: 'Professional quality with references',
   },
   {
     id: 'stability-ai/sdxl',
     name: 'SDXL (IP-Adapter)',
     provider: 'Stability AI',
     description: 'Versatile image transformation',
+  },
+  {
+    id: 'stability-ai/sd3-medium',
+    name: 'SD3 Medium (IP-Adapter)',
+    provider: 'Stability AI',
+    description: 'Latest architecture with references',
   },
 ];
 
@@ -121,7 +193,43 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
     id: 'wan-video/wan-2.5-i2v-fast:5be8b80ffe74f3d3a731693ddd98e7ee94100a0f4ae704bd58e93565977670f9',
     name: 'WAN 2.5 (i2v-fast)',
     provider: 'WAN Video',
-    description: '$0.07/s',
+    description: '$0.07/s improved quality',
+  },
+  {
+    id: 'minimax/video-01',
+    name: 'MiniMax Video-01',
+    provider: 'MiniMax',
+    description: 'High quality 6s videos',
+  },
+  {
+    id: 'minimax/hailuo-2.3-fast',
+    name: 'Hailuo 2.3 Fast',
+    provider: 'MiniMax',
+    description: '$0.19/video fast generation',
+  },
+  {
+    id: 'kwaivgi/kling-v2.5-turbo-proto',
+    name: 'Kling V2.5 Turbo',
+    provider: 'Kuaishou',
+    description: '$0.07/video Chinese AI',
+  },
+  {
+    id: 'kwaivgi/kling-v1.5-pro',
+    name: 'Kling V1.5 Pro',
+    provider: 'Kuaishou',
+    description: 'Professional quality 10s videos',
+  },
+  {
+    id: 'luma/ray',
+    name: 'Luma Ray',
+    provider: 'Luma AI',
+    description: 'Cinematic quality $0.45/video',
+  },
+  {
+    id: 'luma/ray-2',
+    name: 'Luma Ray 2',
+    provider: 'Luma AI',
+    description: 'Next-gen cinematic quality',
   },
   {
     id: 'google/veo-3.1-fast',
@@ -136,22 +244,16 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
     description: 'Premium quality $0.40/s',
   },
   {
-    id: 'kwaivgi/kling-v2.5-turbo-proto',
-    name: 'Kling V2.5 Turbo Proto',
-    provider: 'Kuaishou',
-    description: '$0.07/video',
+    id: 'runway/gen-3-alpha-turbo',
+    name: 'Runway Gen-3 Alpha Turbo',
+    provider: 'Runway',
+    description: 'Fast creative generation',
   },
   {
-    id: 'minimax/hailuo-2.3-fast',
-    name: 'Hailuo 2.3 Fast',
-    provider: 'MiniMax',
-    description: '$0.19/video',
-  },
-  {
-    id: 'luma/ray',
-    name: 'Luma Ray',
-    provider: 'Luma AI',
-    description: 'Cinematic quality $0.45/video',
+    id: 'stability-ai/stable-video-diffusion',
+    name: 'Stable Video Diffusion',
+    provider: 'Stability AI',
+    description: 'Open-source video generation',
   },
 ];
 
@@ -161,7 +263,9 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
 
 export const IMAGE_CONFIG = {
   // Model identifier for Replicate
-  model: process.env.REPLICATE_IMAGE_MODEL || 'black-forest-labs/flux-1.1-pro',
+  // Note: FLUX models on Replicate require the full version hash
+  // flux-schnell is the fastest and most reliable for testing
+  model: process.env.REPLICATE_IMAGE_MODEL || 'black-forest-labs/flux-schnell',
   
   // Image generation parameters
   aspectRatio: '16:9' as const,

@@ -30,9 +30,9 @@ const STORAGE_KEY = 'ai-pipeline-runtime-models';
  */
 export const DEFAULT_RUNTIME_CONFIG: RuntimeModelConfig = {
   text: AVAILABLE_TEXT_MODELS[1].id, // gpt-4o-mini
-  t2i: AVAILABLE_T2I_MODELS[0].id, // flux-1.1-pro
-  i2i: AVAILABLE_I2I_MODELS[0].id, // flux-1.1-pro with IP-Adapter
-  video: AVAILABLE_VIDEO_MODELS[0].id, // wan-2.5
+  t2i: AVAILABLE_T2I_MODELS[2].id, // flux-schnell (fast and reliable)
+  i2i: AVAILABLE_I2I_MODELS[2].id, // flux-dev with IP-Adapter
+  video: AVAILABLE_VIDEO_MODELS[0].id, // wan-2.2 (fast and cost-effective)
 };
 
 /**
