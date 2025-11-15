@@ -1,11 +1,10 @@
 /**
- * Video Generator - Replicate Luma Ray Integration
- * 
- * This module handles video generation using Replicate's Luma Ray model.
+ * Video Generator - Replicate WAN 2.5 Integration
+ *
+ * This module handles video generation using Replicate's WAN 2.5 i2v-fast model.
  * Supports both image-to-video (Scene 0) and image-to-video with seed frames (Scene 1-4).
  */
 
-import { v4 as uuidv4 } from 'uuid';
 import Replicate from 'replicate';
 import fs from 'fs/promises';
 import path from 'path';
@@ -16,13 +15,12 @@ import http from 'http';
 // Constants
 // ============================================================================
 
-const REPLICATE_MODEL = 'luma/ray';
+const REPLICATE_MODEL = 'wan-video/wan-2.5-i2v-fast';
 const MAX_RETRIES = 2;
 const POLL_INTERVAL = 2000; // 2 seconds
 const MAX_POLL_ATTEMPTS = 150; // 5 minutes total (150 * 2s)
 const DOWNLOAD_RETRIES = 3;
-const VIDEO_DURATION = 4; // seconds
-const ASPECT_RATIO = '16:9';
+const VIDEO_RESOLUTION = '720p'; // 720p, 1080p, or 4K
 
 // ============================================================================
 // Types
@@ -31,18 +29,16 @@ const ASPECT_RATIO = '16:9';
 interface ReplicatePrediction {
   id: string;
   status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
-  output?: string | string[];
+  output?: any; // WAN model returns an object with .url() method
   error?: string;
   created_at?: string;
   completed_at?: string;
 }
 
 interface ReplicateInput {
-  prompt: string;
-  start_image_url: string; // Required: Starting frame for video generation
-  duration?: number; // Optional: Video duration in seconds
-  aspect_ratio?: string; // Optional: Video aspect ratio
-  loop?: boolean; // Optional: Whether to loop video
+  image: string; // Required: Image URL for WAN model
+  prompt: string; // Required: Text description of desired motion/action
+  resolution?: string; // Optional: Video resolution (720p, 1080p, 4K)
 }
 
 // ============================================================================
@@ -116,16 +112,14 @@ export async function createVideoPrediction(
   const inputImageUrl = seedFrame || imageUrl;
 
   const input: ReplicateInput = {
+    image: inputImageUrl,
     prompt: prompt.trim(),
-    start_image_url: inputImageUrl,
-    duration: VIDEO_DURATION,
-    aspect_ratio: ASPECT_RATIO,
-    loop: false,
+    resolution: VIDEO_RESOLUTION,
   };
 
   try {
     const prediction = await replicate.predictions.create({
-      version: REPLICATE_MODEL,
+      model: REPLICATE_MODEL,
       input,
     });
 
@@ -231,12 +225,17 @@ export async function pollVideoStatus(predictionId: string): Promise<string> {
 
       // Handle different status types
       if (prediction.status === 'succeeded') {
-        // Extract output URL
+        // Extract output URL - WAN model returns an object with .url() method
         let videoUrl: string;
 
-        if (typeof prediction.output === 'string') {
+        if (prediction.output && typeof prediction.output.url === 'function') {
+          // WAN model format: output has .url() method
+          videoUrl = prediction.output.url();
+        } else if (typeof prediction.output === 'string') {
+          // Direct string URL
           videoUrl = prediction.output;
         } else if (Array.isArray(prediction.output) && prediction.output.length > 0) {
+          // Array format
           videoUrl = prediction.output[0];
         } else {
           throw new Error('Prediction succeeded but no output URL found');
