@@ -88,9 +88,9 @@ export async function GET(
       scenes.push({ status });
     }
 
-    // Determine current scene (first scene that's not completed)
+    // Determine current scene (first scene that's not video_ready)
     const currentScene = scenes.findIndex(
-      (scene) => scene.status !== 'completed' && scene.status !== 'video_ready'
+      (scene) => scene.status !== 'video_ready'
     );
     const currentSceneIndex = currentScene === -1 ? 4 : currentScene;
 
