@@ -115,8 +115,9 @@ export function useSceneGeneration(
       });
 
       const seedFrameUrl = getSeedFrameUrl(sceneIndex);
-      // Get reference images from project (uploaded images for object consistency)
-      const referenceImageUrls = project.referenceImageUrls || [];
+      // Reference images would come from uploaded images for object consistency
+      // For now, using empty array as placeholder
+      const referenceImageUrls: string[] = [];
       
       const request: ImageGenerationRequest = {
         prompt: customPrompt || scene.imagePrompt,

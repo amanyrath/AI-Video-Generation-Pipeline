@@ -59,7 +59,7 @@ export async function GET(
     const scenes = [];
     for (let i = 0; i < 5; i++) {
       const sceneDir = path.join(projectDir, 'scenes', `scene-${i}`);
-      let status: 'pending' | 'generating_image' | 'image_ready' | 'generating_video' | 'video_ready' | 'completed' = 'pending';
+      let status: 'pending' | 'image_ready' | 'video_ready' = 'pending';
 
       try {
         await fs.access(sceneDir);
@@ -88,9 +88,9 @@ export async function GET(
       scenes.push({ status });
     }
 
-    // Determine current scene (first scene that's not completed)
+    // Determine current scene (first scene that's not video_ready)
     const currentScene = scenes.findIndex(
-      (scene) => scene.status !== 'completed' && scene.status !== 'video_ready'
+      (scene) => scene.status !== 'video_ready'
     );
     const currentSceneIndex = currentScene === -1 ? 4 : currentScene;
 

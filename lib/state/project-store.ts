@@ -359,8 +359,9 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     const scene = state.project.storyboard[sceneIndex];
     if (!scene) throw new Error('Invalid scene');
     
-    // Get reference images from project (uploaded images for object consistency)
-    const referenceImageUrls = state.project.referenceImageUrls || [];
+    // Reference images would come from uploaded images for object consistency
+    // For now, using empty array as placeholder
+    const referenceImageUrls: string[] = [];
     
     const request = {
       prompt: prompt || scene.imagePrompt,

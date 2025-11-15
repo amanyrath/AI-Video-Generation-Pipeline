@@ -146,7 +146,7 @@ export default function EditorView() {
           setGeneratingImages(prev => {
             const updated = [...prev];
             updated[index] = {
-              predictionId: response.predictionId,
+              predictionId: response.predictionId || '',
               status: response.status || 'starting',
             };
             return updated;
@@ -154,7 +154,7 @@ export default function EditorView() {
 
           // Poll for completion
           const statusResponse = await pollImageStatus(
-            response.predictionId,
+            response.predictionId || '',
             {
               interval: 2000,
               projectId: project.id,
@@ -165,7 +165,7 @@ export default function EditorView() {
                   const updated = [...prev];
                   updated[index] = {
                     ...updated[index],
-                    status: status.status,
+                    status: status.status === 'canceled' ? 'failed' : status.status,
                   };
                   return updated;
                 });
