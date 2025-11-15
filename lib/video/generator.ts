@@ -5,7 +5,6 @@
  * Supports both image-to-video (Scene 0) and image-to-video with seed frames (Scene 1-4).
  */
 
-import { v4 as uuidv4 } from 'uuid';
 import Replicate from 'replicate';
 import fs from 'fs/promises';
 import path from 'path';
@@ -35,7 +34,7 @@ const VIDEO_RESOLUTION = '720p'; // wan-video uses resolution instead of aspect_
 interface ReplicatePrediction {
   id: string;
   status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
-  output?: string | string[];
+  output?: any; // WAN model returns an object with .url() method
   error?: string;
   created_at?: string;
   completed_at?: string;
@@ -135,7 +134,7 @@ export async function createVideoPrediction(
     // 2. model: "owner/model" and version: "hash" (separate)
     // Using full format for clarity
     const prediction = await replicate.predictions.create({
-      version: REPLICATE_MODEL,
+      model: REPLICATE_MODEL,
       input,
     });
 
@@ -241,12 +240,17 @@ export async function pollVideoStatus(predictionId: string): Promise<string> {
 
       // Handle different status types
       if (prediction.status === 'succeeded') {
-        // Extract output URL
+        // Extract output URL - WAN model returns an object with .url() method
         let videoUrl: string;
 
-        if (typeof prediction.output === 'string') {
+        if (prediction.output && typeof prediction.output.url === 'function') {
+          // WAN model format: output has .url() method
+          videoUrl = prediction.output.url();
+        } else if (typeof prediction.output === 'string') {
+          // Direct string URL
           videoUrl = prediction.output;
         } else if (Array.isArray(prediction.output) && prediction.output.length > 0) {
+          // Array format
           videoUrl = prediction.output[0];
         } else {
           throw new Error('Prediction succeeded but no output URL found');
