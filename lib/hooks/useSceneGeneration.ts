@@ -115,11 +115,15 @@ export function useSceneGeneration(
       });
 
       const seedFrameUrl = getSeedFrameUrl(sceneIndex);
+      // Get reference images from project (uploaded images for object consistency)
+      const referenceImageUrls = project.referenceImageUrls || [];
+      
       const request: ImageGenerationRequest = {
         prompt: customPrompt || scene.imagePrompt,
         projectId: project.id,
         sceneIndex,
         seedImage: seedFrameUrl,
+        referenceImageUrls, // Pass reference images for IP-Adapter consistency
       };
 
       const response = await generateImage(request);

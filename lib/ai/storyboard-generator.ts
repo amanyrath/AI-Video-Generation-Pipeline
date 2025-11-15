@@ -14,7 +14,8 @@ import { Scene, StoryboardResponse } from '../types';
 // ============================================================================
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = 'openai/gpt-4o';
+// Try gpt-4o-mini first as fallback if gpt-4o is not available
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1 second
 
@@ -559,7 +560,7 @@ function getErrorCode(error: unknown): 'INVALID_REQUEST' | 'GENERATION_FAILED' |
     return 'RATE_LIMIT';
   }
 
-  if (errorMessage.includes('authentication') || errorMessage.includes('api key')) {
+  if (errorMessage.includes('authentication') || errorMessage.includes('api key') || errorMessage.includes('user not found') || errorMessage.includes('status: 401')) {
     return 'AUTHENTICATION_FAILED';
   }
 

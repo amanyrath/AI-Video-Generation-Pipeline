@@ -1,7 +1,7 @@
 /**
- * Video Generator - Replicate Luma Ray Integration
+ * Video Generator - Replicate wan-video Integration
  * 
- * This module handles video generation using Replicate's Luma Ray model.
+ * This module handles video generation using Replicate's wan-video/wan-2.5-i2v-fast model.
  * Supports both image-to-video (Scene 0) and image-to-video with seed frames (Scene 1-4).
  */
 
@@ -16,13 +16,17 @@ import http from 'http';
 // Constants
 // ============================================================================
 
-const REPLICATE_MODEL = 'luma/ray';
+// Using wan-video/wan-2.5-i2v-fast model on Replicate
+// Version hash: 5be8b80ffe74f3d3a731693ddd98e7ee94100a0f4ae704bd58e93565977670f9
+// Can be overridden via REPLICATE_VIDEO_MODEL environment variable
+// Format: "wan-video/wan-2.5-i2v-fast:version_hash" or just "wan-video/wan-2.5-i2v-fast" (uses latest)
+const REPLICATE_MODEL = process.env.REPLICATE_VIDEO_MODEL || 'wan-video/wan-2.5-i2v-fast:5be8b80ffe74f3d3a731693ddd98e7ee94100a0f4ae704bd58e93565977670f9';
 const MAX_RETRIES = 2;
 const POLL_INTERVAL = 2000; // 2 seconds
 const MAX_POLL_ATTEMPTS = 150; // 5 minutes total (150 * 2s)
 const DOWNLOAD_RETRIES = 3;
-const VIDEO_DURATION = 4; // seconds
-const ASPECT_RATIO = '16:9';
+const VIDEO_DURATION = 5; // seconds (wan-video only supports 5 or 10 seconds)
+const VIDEO_RESOLUTION = '720p'; // wan-video uses resolution instead of aspect_ratio
 
 // ============================================================================
 // Types
@@ -38,11 +42,13 @@ interface ReplicatePrediction {
 }
 
 interface ReplicateInput {
-  prompt: string;
-  start_image_url: string; // Required: Starting frame for video generation
-  duration?: number; // Optional: Video duration in seconds
-  aspect_ratio?: string; // Optional: Video aspect ratio
-  loop?: boolean; // Optional: Whether to loop video
+  image: string; // Required: URL or Base64 string of the input image
+  prompt: string; // Required: Text prompt guiding the video generation
+  duration?: number; // Optional: Duration of the generated video in seconds
+  resolution?: string; // Optional: Video resolution (e.g., '720p')
+  negative_prompt?: string; // Optional: Text to specify elements to avoid
+  enable_prompt_expansion?: boolean; // Optional: Enable prompt optimization
+  seed?: number; // Optional: Random seed for reproducible generation
 }
 
 // ============================================================================
@@ -116,14 +122,18 @@ export async function createVideoPrediction(
   const inputImageUrl = seedFrame || imageUrl;
 
   const input: ReplicateInput = {
+    image: inputImageUrl, // wan-video uses 'image' parameter instead of 'start_image_url'
     prompt: prompt.trim(),
-    start_image_url: inputImageUrl,
     duration: VIDEO_DURATION,
-    aspect_ratio: ASPECT_RATIO,
-    loop: false,
+    resolution: VIDEO_RESOLUTION, // wan-video uses 'resolution' instead of 'aspect_ratio'
+    enable_prompt_expansion: true, // Enable prompt optimization for better results
   };
 
   try {
+    // Replicate SDK accepts either:
+    // 1. version: "owner/model:hash" (full format)
+    // 2. model: "owner/model" and version: "hash" (separate)
+    // Using full format for clarity
     const prediction = await replicate.predictions.create({
       version: REPLICATE_MODEL,
       input,
@@ -401,9 +411,9 @@ export async function generateVideo(
   console.log(`${logPrefix} Project ID: ${projectId}`);
   console.log(`${logPrefix} Scene Index: ${sceneIndex}`);
 
-  // Create output directory in test videos folder
+  // Create output directory in video testing folder
   const projectRoot = process.cwd();
-  const outputDir = path.join(projectRoot, 'test videos');
+  const outputDir = path.join(projectRoot, 'video testing');
   await fs.mkdir(outputDir, { recursive: true });
 
   // Create unique filename with timestamp

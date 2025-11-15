@@ -65,7 +65,26 @@ export async function GET(
     // If not succeeded, return current status
     if (status !== 'succeeded') {
       if (status === 'failed' || status === 'canceled') {
-        const errorMessage = (prediction as any).error || `Video generation ${status}`;
+        // Extract detailed error message from Replicate
+        const errorDetails = (prediction as any).error;
+        let errorMessage = `Video generation ${status}`;
+        
+        if (errorDetails) {
+          if (typeof errorDetails === 'string') {
+            errorMessage = errorDetails;
+          } else if (errorDetails.detail) {
+            errorMessage = errorDetails.detail;
+          } else if (errorDetails.message) {
+            errorMessage = errorDetails.message;
+          }
+        }
+        
+        console.error('[API] Video generation failed:', {
+          predictionId,
+          status,
+          error: errorDetails,
+        });
+        
         return NextResponse.json({
           success: false,
           error: errorMessage,
@@ -107,7 +126,7 @@ export async function GET(
         // Download video using the generateVideo utility's download function
         // We'll need to extract the download logic or call it directly
         const projectRoot = process.cwd();
-        const outputDir = path.join(projectRoot, 'test videos');
+        const outputDir = path.join(projectRoot, 'video testing');
         await fs.mkdir(outputDir, { recursive: true });
 
         const timestamp = Date.now();
@@ -145,7 +164,8 @@ export async function GET(
 
         // Verify file was created
         await fs.access(outputPath);
-        const relativePath = path.relative(projectRoot, outputPath);
+        // Return absolute path for consistency with other file paths in the system
+        const absolutePath = outputPath;
 
         return NextResponse.json({
           success: true,
@@ -153,18 +173,20 @@ export async function GET(
             status: 'succeeded',
             output: videoUrl,
             video: {
-              localPath: relativePath,
+              localPath: absolutePath,
             },
           },
         });
       } catch (downloadError: any) {
         console.error('[API] Video download error:', downloadError);
-        // Return status succeeded but without local path
+        // Return status succeeded with Replicate URL even if download failed
+        // Client can use the Replicate URL directly
         return NextResponse.json({
           success: true,
           data: {
             status: 'succeeded',
-            output: videoUrl,
+            output: videoUrl, // Replicate URL - client can use this
+            error: `Video download failed: ${downloadError.message}. Using Replicate URL instead.`,
           },
         });
       }

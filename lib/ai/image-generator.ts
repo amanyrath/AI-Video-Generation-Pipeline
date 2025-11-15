@@ -1,8 +1,8 @@
 /**
  * Image Generator - Replicate Integration
  * 
- * This module handles image generation using Replicate's Flux-schnell model.
- * Supports both text-to-image and image-to-image generation.
+ * This module handles image generation using Replicate's Flux-dev model.
+ * Supports text-to-image, image-to-image, and reference image consistency via IP-Adapter.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -15,11 +15,14 @@ import { GeneratedImage } from '../types';
 // Constants
 // ============================================================================
 
-const REPLICATE_MODEL = 'black-forest-labs/flux-schnell';
+// Using flux-dev for better reference image support via IP-Adapter
+// Can be overridden via REPLICATE_IMAGE_MODEL environment variable
+const REPLICATE_MODEL = process.env.REPLICATE_IMAGE_MODEL || 'black-forest-labs/flux-dev';
 const MAX_RETRIES = 3;
 const POLL_INTERVAL = 2000; // 2 seconds
-const MAX_POLL_ATTEMPTS = 15; // 30 seconds total (15 * 2s)
+const MAX_POLL_ATTEMPTS = 30; // 60 seconds total (30 * 2s) - flux-dev is slower than schnell
 const DOWNLOAD_RETRIES = 3;
+const DEFAULT_IP_ADAPTER_SCALE = 0.7; // Control reference image influence (0-1)
 
 // ============================================================================
 // Types
@@ -36,12 +39,13 @@ interface ReplicatePrediction {
 
 interface ReplicateInput {
   prompt: string;
-  go_fast?: boolean;
   num_outputs?: number;
   aspect_ratio?: string;
   output_format?: string;
   output_quality?: number;
   image?: string; // For image-to-image
+  ip_adapter_images?: string[]; // For IP-Adapter reference images (object consistency)
+  ip_adapter_scale?: number; // Control how strongly to follow reference (0-1, default 0.7)
 }
 
 // ============================================================================
@@ -77,11 +81,15 @@ function createReplicateClient(): Replicate {
  * Creates an image prediction on Replicate
  * @param prompt Image generation prompt
  * @param seedImage Optional seed image URL for image-to-image generation
+ * @param referenceImageUrls Optional array of reference image URLs for IP-Adapter (object consistency)
+ * @param ipAdapterScale Optional IP-Adapter scale (0-1, default 0.7)
  * @returns Prediction ID
  */
 export async function createImagePrediction(
   prompt: string,
-  seedImage?: string
+  seedImage?: string,
+  referenceImageUrls?: string[],
+  ipAdapterScale?: number
 ): Promise<string> {
   // Validate inputs
   if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
@@ -92,13 +100,23 @@ export async function createImagePrediction(
     throw new Error('Seed image must be a valid URL string if provided');
   }
 
+  if (referenceImageUrls && !Array.isArray(referenceImageUrls)) {
+    throw new Error('Reference image URLs must be an array if provided');
+  }
+
   const logPrefix = '[ImageGenerator]';
   console.log(`${logPrefix} ========================================`);
   console.log(`${logPrefix} Creating image prediction`);
+  console.log(`${logPrefix} Model: ${REPLICATE_MODEL}`);
   console.log(`${logPrefix} Prompt: "${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}"`);
+  
   if (seedImage) {
     console.log(`${logPrefix} Seed image: ${seedImage.substring(0, 80)}${seedImage.length > 80 ? '...' : ''}`);
     console.log(`${logPrefix} Mode: image-to-image`);
+  } else if (referenceImageUrls && referenceImageUrls.length > 0) {
+    console.log(`${logPrefix} Reference images: ${referenceImageUrls.length} image(s) for object consistency`);
+    console.log(`${logPrefix} IP-Adapter scale: ${ipAdapterScale ?? DEFAULT_IP_ADAPTER_SCALE}`);
+    console.log(`${logPrefix} Mode: text-to-image with IP-Adapter`);
   } else {
     console.log(`${logPrefix} Mode: text-to-image`);
   }
@@ -106,10 +124,9 @@ export async function createImagePrediction(
 
   const replicate = createReplicateClient();
 
-  // Build input parameters according to PRD
+  // Build input parameters for flux-dev
   const input: ReplicateInput = {
     prompt: prompt.trim(),
-    go_fast: true, // Enable fp8 optimization for speed
     num_outputs: 1,
     aspect_ratio: '16:9',
     output_format: 'png',
@@ -119,6 +136,13 @@ export async function createImagePrediction(
   // Add seed image if provided (for image-to-image)
   if (seedImage) {
     input.image = seedImage;
+  }
+
+  // Add IP-Adapter reference images for object consistency
+  if (referenceImageUrls && referenceImageUrls.length > 0) {
+    input.ip_adapter_images = referenceImageUrls;
+    input.ip_adapter_scale = ipAdapterScale ?? DEFAULT_IP_ADAPTER_SCALE;
+    console.log(`${logPrefix} Using IP-Adapter with ${referenceImageUrls.length} reference image(s) for object consistency`);
   }
 
   try {
@@ -196,13 +220,17 @@ async function retryWithBackoff<T>(
  * Creates an image prediction with retry logic
  * @param prompt Image generation prompt
  * @param seedImage Optional seed image URL
+ * @param referenceImageUrls Optional array of reference image URLs for IP-Adapter
+ * @param ipAdapterScale Optional IP-Adapter scale (0-1)
  * @returns Prediction ID
  */
 export async function createImagePredictionWithRetry(
   prompt: string,
-  seedImage?: string
+  seedImage?: string,
+  referenceImageUrls?: string[],
+  ipAdapterScale?: number
 ): Promise<string> {
-  return retryWithBackoff(() => createImagePrediction(prompt, seedImage));
+  return retryWithBackoff(() => createImagePrediction(prompt, seedImage, referenceImageUrls, ipAdapterScale));
 }
 
 // ============================================================================
@@ -478,13 +506,17 @@ export async function downloadAndSaveImageWithRetry(
  * @param projectId Project ID for file organization
  * @param sceneIndex Scene index (0-4)
  * @param seedImage Optional seed image URL for image-to-image generation
+ * @param referenceImageUrls Optional array of reference image URLs for IP-Adapter (object consistency)
+ * @param ipAdapterScale Optional IP-Adapter scale (0-1, default 0.7)
  * @returns GeneratedImage object
  */
 export async function generateImage(
   prompt: string,
   projectId: string,
   sceneIndex: number,
-  seedImage?: string
+  seedImage?: string,
+  referenceImageUrls?: string[],
+  ipAdapterScale?: number
 ): Promise<GeneratedImage> {
   const logPrefix = '[ImageGenerator]';
   console.log(`${logPrefix} ========================================`);
@@ -495,11 +527,14 @@ export async function generateImage(
   if (seedImage) {
     console.log(`${logPrefix} Using seed image for image-to-image generation`);
   }
+  if (referenceImageUrls && referenceImageUrls.length > 0) {
+    console.log(`${logPrefix} Using ${referenceImageUrls.length} reference image(s) for object consistency`);
+  }
   const flowStartTime = Date.now();
 
   try {
     // Step 1: Create prediction
-    const predictionId = await createImagePredictionWithRetry(prompt, seedImage);
+    const predictionId = await createImagePredictionWithRetry(prompt, seedImage, referenceImageUrls, ipAdapterScale);
     const step1Time = Date.now();
     console.log(`${logPrefix} Step 1/3 completed in ${step1Time - flowStartTime}ms: Prediction created (ID: ${predictionId})`);
 

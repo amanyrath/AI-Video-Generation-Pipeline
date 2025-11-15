@@ -359,11 +359,15 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     const scene = state.project.storyboard[sceneIndex];
     if (!scene) throw new Error('Invalid scene');
     
+    // Get reference images from project (uploaded images for object consistency)
+    const referenceImageUrls = state.project.referenceImageUrls || [];
+    
     const request = {
       prompt: prompt || scene.imagePrompt,
       projectId: state.project.id,
       sceneIndex,
       seedImage: seedFrame,
+      referenceImageUrls, // Pass reference images for IP-Adapter consistency
     };
     
     const response = await generateImage(request);

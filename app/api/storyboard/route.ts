@@ -148,6 +148,8 @@ export async function POST(request: NextRequest) {
     let statusCode = 500;
     if (errorResponse.code === 'INVALID_REQUEST') {
       statusCode = 400;
+    } else if (errorResponse.code === 'AUTHENTICATION_FAILED') {
+      statusCode = 401; // Authentication errors should return 401
     } else if (errorResponse.code === 'RATE_LIMIT') {
       statusCode = 503;
     } else if (errorResponse.retryable) {

@@ -55,8 +55,8 @@ const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 // Test prompts
 const TEST_PROMPTS = [
   {
-    name: 'Scene 0 - No Seed',
-    prompt: 'Professional product photography of luxury watch, golden hour lighting, elegant composition, minimalist aesthetic, 16:9 aspect ratio, high-end commercial style',
+    name: 'Scene 0 - Custom Prompt',
+    prompt: 'Santa sliding down a hill with a sled full of gifts, with rabbits pulling his sled, 16:9 aspect ratio, festive holiday scene, winter landscape',
     sceneIndex: 0,
     seedImage: undefined,
   },

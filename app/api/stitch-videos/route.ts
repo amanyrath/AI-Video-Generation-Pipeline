@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Create output directory
-    const outputDir = path.join(projectRoot, 'test videos');
+    const outputDir = path.join(projectRoot, 'video testing');
     await fs.mkdir(outputDir, { recursive: true });
 
     const timestamp = Date.now();

@@ -3,7 +3,7 @@
  * 
  * POST /api/generate-image
  * 
- * Initiates image generation using Replicate Flux-schnell model.
+ * Initiates image generation using Replicate Flux-dev model with IP-Adapter support.
  * Returns immediately with a prediction ID for polling.
  */
 
@@ -121,8 +121,15 @@ export async function POST(request: NextRequest) {
     const prompt = body.prompt.trim();
     const projectId = body.projectId.trim();
     const sceneIndex = body.sceneIndex;
-    const seedImage = body.seedImage?.trim();
+    let seedImage = body.seedImage?.trim();
     const referenceImageUrls = body.referenceImageUrls || [];
+
+    // For Scene 0: Use the first reference image as seed image for image-to-image generation
+    // This ensures the uploaded car image is used as the starting point, maintaining object consistency
+    if (sceneIndex === 0 && !seedImage && referenceImageUrls.length > 0) {
+      seedImage = referenceImageUrls[0];
+      console.log('[Image Generation API] Scene 0: Using first reference image as seed image for image-to-image generation');
+    }
 
     console.log('[Image Generation API] Request received:', {
       prompt: prompt.substring(0, 50) + '...',
@@ -130,6 +137,7 @@ export async function POST(request: NextRequest) {
       sceneIndex,
       hasSeedImage: !!seedImage,
       referenceImageCount: referenceImageUrls.length,
+      usingReferenceAsSeed: sceneIndex === 0 && !body.seedImage && referenceImageUrls.length > 0,
     });
 
     // Check for API key
@@ -145,16 +153,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Enhance prompt with reference images if provided
-    // Note: Flux-schnell doesn't directly support reference images, so we incorporate them into the prompt
-    let enhancedPrompt = prompt;
-    if (referenceImageUrls.length > 0) {
-      // Add detailed instructions to maintain product consistency across scenes
-      enhancedPrompt = `${prompt}\n\nCRITICAL INSTRUCTIONS FOR PRODUCT CONSISTENCY:\n- The product (headphones) shown in the reference images must appear IDENTICALLY in this scene\n- Use the EXACT same product model, brand, design, colors, materials, textures, and visual details\n- The product's physical appearance, shape, size, and all design elements must match the reference images exactly\n- ONLY the following may vary: camera angle, composition, lighting, background, and scene context\n- The product itself must be visually identical to maintain brand consistency across all scenes\n- Pay special attention to matching: headphone design, color scheme, material finish, brand logos, button placement, and overall aesthetic`;
-    }
-
-    // Create prediction
-    const predictionId = await createImagePredictionWithRetry(enhancedPrompt, seedImage);
+    // For Scene 0 with reference image as seed: Use image-to-image mode (stronger consistency)
+    // For other scenes: Use IP-Adapter for additional consistency alongside seed frames
+    // IP-Adapter scale: 0.7 provides good balance between consistency and creativity
+    const ipAdapterScale = 0.7;
+    const useIpAdapter = referenceImageUrls.length > 0 && (sceneIndex > 0 || seedImage !== referenceImageUrls[0]);
+    
+    const predictionId = await createImagePredictionWithRetry(
+      prompt,
+      seedImage,
+      useIpAdapter ? referenceImageUrls : undefined,
+      useIpAdapter ? ipAdapterScale : undefined
+    );
 
     const duration = Date.now() - startTime;
     console.log(`[Image Generation API] Prediction created in ${duration}ms: ${predictionId}`);

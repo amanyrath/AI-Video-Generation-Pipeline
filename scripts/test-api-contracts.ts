@@ -61,7 +61,7 @@ const contracts: ApiContract[] = [
     endpoint: '/api/extract-frames',
     method: 'POST',
     requestBody: {
-      videoPath: 'test videos/test-video.mp4',
+      videoPath: 'video testing/test-video.mp4',
       projectId: 'test-project-123',
       sceneIndex: 0,
     },
@@ -85,11 +85,11 @@ const contracts: ApiContract[] = [
     method: 'POST',
     requestBody: {
       videoPaths: [
-        'test videos/scene-0.mp4',
-        'test videos/scene-1.mp4',
-        'test videos/scene-2.mp4',
-        'test videos/scene-3.mp4',
-        'test videos/scene-4.mp4',
+        'video testing/scene-0.mp4',
+        'video testing/scene-1.mp4',
+        'video testing/scene-2.mp4',
+        'video testing/scene-3.mp4',
+        'video testing/scene-4.mp4',
       ],
       projectId: 'test-project-123',
       uploadToS3: false,

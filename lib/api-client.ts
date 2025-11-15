@@ -223,13 +223,13 @@ export async function pollImageStatus(
   options: {
     interval?: number;
     timeout?: number;
-    onProgress?: (status: ImageStatusResponse) => void;
     projectId?: string;
     sceneIndex?: number;
     prompt?: string;
+    onProgress?: (status: ImageStatusResponse) => void;
   } = {}
 ): Promise<ImageStatusResponse> {
-  const { interval = 2000, timeout = 300000, onProgress, projectId, sceneIndex, prompt } = options; // 5 min default timeout
+  const { interval = 2000, timeout = 300000, projectId, sceneIndex, prompt, onProgress } = options; // 5 min default timeout
   const startTime = Date.now();
 
   return new Promise((resolve, reject) => {
@@ -323,7 +323,17 @@ export async function generateVideo(
       throw new Error(error.error || 'Failed to generate video');
     }
 
-    return response.json();
+    const result = await response.json();
+    
+    // Extract predictionId from the nested data structure
+    if (result.success && result.data?.predictionId) {
+      return {
+        predictionId: result.data.predictionId,
+        status: 'starting',
+      };
+    }
+    
+    throw new Error('Invalid response format from video generation API');
   });
 }
 
@@ -336,9 +346,11 @@ export async function pollVideoStatus(
     interval?: number;
     timeout?: number;
     onProgress?: (status: any) => void;
+    projectId?: string;
+    sceneIndex?: number;
   } = {}
 ): Promise<{ status: string; videoPath?: string; error?: string }> {
-  const { interval = 5000, timeout = 600000, onProgress } = options; // 10 min default timeout
+  const { interval = 5000, timeout = 600000, onProgress, projectId, sceneIndex } = options; // 10 min default timeout
   const startTime = Date.now();
 
   return new Promise((resolve, reject) => {
@@ -350,7 +362,16 @@ export async function pollVideoStatus(
           return;
         }
 
-        const response = await fetch(`${API_BASE_URL}/api/generate-video/${predictionId}`);
+        // Build URL with query parameters if provided
+        let url = `${API_BASE_URL}/api/generate-video/${predictionId}`;
+        if (projectId && sceneIndex !== undefined) {
+          const params = new URLSearchParams();
+          params.set('projectId', projectId);
+          params.set('sceneIndex', sceneIndex.toString());
+          url += '?' + params.toString();
+        }
+
+        const response = await fetch(url);
         if (!response.ok) {
           throw new Error('Failed to fetch video status');
         }
@@ -362,18 +383,36 @@ export async function pollVideoStatus(
           onProgress(status);
         }
 
-        // Check if completed
-        if (status.status === 'succeeded') {
-          resolve(status);
-          return;
-        }
-
-        if (status.status === 'failed' || status.status === 'canceled') {
+        // Check if request failed (success: false means prediction failed)
+        if (status.success === false) {
           reject(new Error(status.error || 'Video generation failed'));
           return;
         }
 
-        // Continue polling
+        // Extract status from nested data structure if present
+        const actualStatus = status.data?.status || status.status;
+
+        // Check if completed (nested in data object)
+        if (actualStatus === 'succeeded') {
+          // Use local path if available, otherwise use Replicate URL as fallback
+          const videoPath = status.data?.video?.localPath;
+          const replicateUrl = status.data?.output;
+          
+          resolve({
+            status: 'succeeded',
+            videoPath: videoPath || replicateUrl, // Fallback to Replicate URL if local download failed
+            error: videoPath ? undefined : status.data?.error, // Include error if no local path
+          });
+          return;
+        }
+
+        // Check if failed or canceled
+        if (actualStatus === 'failed' || actualStatus === 'canceled') {
+          reject(new Error(status.error || status.data?.error || 'Video generation failed'));
+          return;
+        }
+
+        // Continue polling if still processing
         setTimeout(poll, interval);
       } catch (error) {
         reject(error);
@@ -459,6 +498,35 @@ export async function getProjectStatus(projectId: string): Promise<any> {
     }
 
     return response.json();
+  });
+}
+
+/**
+ * Upload image to S3
+ */
+export async function uploadImageToS3(
+  imagePath: string,
+  projectId: string
+): Promise<{ s3Url: string; s3Key: string }> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/upload-image-s3`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        imagePath,
+        projectId,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to upload image to S3' }));
+      throw new Error(error.error || 'Failed to upload image to S3');
+    }
+
+    const data = await response.json();
+    return data.data;
   });
 }
 

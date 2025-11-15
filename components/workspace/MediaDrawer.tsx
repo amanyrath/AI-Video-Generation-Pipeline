@@ -35,6 +35,7 @@ export default function MediaDrawer() {
     uploaded: true,
     final: true,
   });
+  const [videoErrors, setVideoErrors] = useState<Record<string, boolean>>({});
 
   // Get actual media from project state
   const generatedImages = useMemo(() => {
@@ -58,10 +59,19 @@ export default function MediaDrawer() {
     const allVideos: MediaItem[] = [];
     scenes.forEach((scene, sceneIndex) => {
       if (scene.videoLocalPath) {
+        // Convert absolute file path to serveable URL
+        // If it's already a URL (starts with http or /api), use it as-is
+        // Otherwise, convert local path to serveable URL
+        let videoUrl = scene.videoLocalPath;
+        if (!videoUrl.startsWith('http') && !videoUrl.startsWith('/api')) {
+          // Convert absolute path to serveable URL
+          videoUrl = `/api/serve-video?path=${encodeURIComponent(scene.videoLocalPath)}`;
+        }
+        
         allVideos.push({
           id: `video-${sceneIndex}`,
           type: 'video' as const,
-          url: scene.videoLocalPath,
+          url: videoUrl,
           sceneIndex,
           timestamp: new Date().toISOString(),
         });
@@ -142,6 +152,7 @@ export default function MediaDrawer() {
       if (item.type === 'image') {
         selectImage(item.sceneIndex, item.id);
       }
+      // Videos are already displayed in the editor view when switching to that scene
     }
   };
 
@@ -156,6 +167,7 @@ export default function MediaDrawer() {
 
   const renderMediaThumbnail = (item: MediaItem) => {
     const isSelected = mediaDrawer.selectedItems.includes(item.id);
+    const hasVideoError = videoErrors[item.id] || false;
 
     return (
       <div
@@ -176,6 +188,31 @@ export default function MediaDrawer() {
             alt={item.prompt || 'Media'}
             className="w-full h-full object-cover aspect-video"
             loading="lazy"
+          />
+        ) : item.type === 'video' && !hasVideoError ? (
+          <video
+            src={item.url}
+            className="w-full h-full object-cover aspect-video"
+            muted
+            playsInline
+            preload="metadata"
+            onMouseEnter={(e) => {
+              // Play video on hover for preview
+              const video = e.currentTarget;
+              video.play().catch(() => {
+                // Ignore autoplay errors
+              });
+            }}
+            onMouseLeave={(e) => {
+              // Pause video when not hovering
+              const video = e.currentTarget;
+              video.pause();
+              video.currentTime = 0; // Reset to beginning
+            }}
+            onError={() => {
+              // Mark this video as having an error
+              setVideoErrors((prev) => ({ ...prev, [item.id]: true }));
+            }}
           />
         ) : (
           <div className="aspect-video bg-gray-100 dark:bg-gray-800 flex items-center justify-center">

@@ -65,6 +65,7 @@ temp/
 # Test files (not for production)
 test photos/
 test videos/
+video testing/
 
 # Cache
 .cache/
