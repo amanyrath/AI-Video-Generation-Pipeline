@@ -34,6 +34,7 @@ interface ProjectStore {
   // Actions
   createProject: (prompt: string, targetDuration?: number) => void;
   setStoryboard: (scenes: Scene[]) => void;
+  updateScenePrompt: (sceneIndex: number, imagePrompt: string) => void;
   setViewMode: (mode: ViewMode) => void;
   setCurrentSceneIndex: (index: number) => void;
   addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
@@ -146,6 +147,36 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           status: 'scene_generation',
         },
         scenes: scenesWithState,
+      };
+    });
+  },
+  
+  updateScenePrompt: (sceneIndex: number, imagePrompt: string) => {
+    set((state) => {
+      if (!state.project || !state.project.storyboard[sceneIndex]) return state;
+      
+      // Update the scene in the storyboard
+      const updatedStoryboard = [...state.project.storyboard];
+      updatedStoryboard[sceneIndex] = {
+        ...updatedStoryboard[sceneIndex],
+        imagePrompt,
+      };
+      
+      // Update the scene in scenes array (SceneWithState)
+      const updatedScenes = [...state.scenes];
+      if (updatedScenes[sceneIndex]) {
+        updatedScenes[sceneIndex] = {
+          ...updatedScenes[sceneIndex],
+          imagePrompt,
+        };
+      }
+      
+      return {
+        project: {
+          ...state.project,
+          storyboard: updatedStoryboard,
+        },
+        scenes: updatedScenes,
       };
     });
   },

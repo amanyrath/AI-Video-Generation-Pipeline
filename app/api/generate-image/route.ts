@@ -136,7 +136,9 @@ export async function POST(request: NextRequest) {
       projectId,
       sceneIndex,
       hasSeedImage: !!seedImage,
+      seedImageUrl: seedImage ? seedImage.substring(0, 80) + '...' : 'none',
       referenceImageCount: referenceImageUrls.length,
+      referenceImageUrls: referenceImageUrls.map(url => url.substring(0, 80) + '...'),
       usingReferenceAsSeed: sceneIndex === 0 && !body.seedImage && referenceImageUrls.length > 0,
     });
 
@@ -153,11 +155,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // For Scene 0 with reference image as seed: Use image-to-image mode (stronger consistency)
-    // For other scenes: Use IP-Adapter for additional consistency alongside seed frames
+    // For Scene 0: Use reference image as seed (image-to-image mode)
+    // For Scenes 1-4: Use seed frame as seed + reference image via IP-Adapter (visual continuity + object consistency)
     // IP-Adapter scale: 0.7 provides good balance between consistency and creativity
     const ipAdapterScale = 0.7;
-    const useIpAdapter = referenceImageUrls.length > 0 && (sceneIndex > 0 || seedImage !== referenceImageUrls[0]);
+    // Use IP-Adapter for scenes 1-4 when reference images are available (alongside seed frames)
+    // Scene 0 uses reference image as seed directly, so IP-Adapter not needed
+    const useIpAdapter = sceneIndex > 0 && referenceImageUrls.length > 0;
     
     const predictionId = await createImagePredictionWithRetry(
       prompt,

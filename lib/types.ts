@@ -116,7 +116,8 @@ export interface SceneWithState extends Scene {
 
 export interface SeedFrame {
   id: string;
-  url: string;              // Local file path
+  url: string;              // S3 URL or public HTTP/HTTPS URL (for video generation)
+  localPath?: string;       // Optional: Local file path (for reference/fallback)
   timestamp: number;        // 0.1s, 0.2s, 0.3s, 0.4s, 0.5s from end
 }
 
