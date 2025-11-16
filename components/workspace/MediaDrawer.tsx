@@ -29,6 +29,7 @@ export default function MediaDrawer() {
     selectImage,
   } = useProjectStore();
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    characterRefs: true,
     images: true,
     videos: true,
     frames: true,
@@ -38,12 +39,48 @@ export default function MediaDrawer() {
   const [videoErrors, setVideoErrors] = useState<Record<string, boolean>>({});
   const [previewImage, setPreviewImage] = useState<MediaItem | null>(null);
   const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
+  const videoRefsMap = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const videoHoverTimeoutsMap = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const [visibleItems, setVisibleItems] = useState<Set<string>>(new Set());
+  const thumbnailRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (clickTimeoutRef.current) {
         clearTimeout(clickTimeoutRef.current);
+      }
+      // Clean up all video hover timeouts
+      videoHoverTimeoutsMap.current.forEach((timeoutId) => {
+        clearTimeout(timeoutId);
+      });
+      videoHoverTimeoutsMap.current.clear();
+    };
+  }, []);
+
+  // Setup intersection observer once on mount
+  useEffect(() => {
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const itemId = entry.target.getAttribute('data-item-id');
+          if (itemId && entry.isIntersecting) {
+            setVisibleItems((prev) => new Set(prev).add(itemId));
+          }
+        });
+      },
+      {
+        root: null,
+        rootMargin: '50px', // Load items 50px before they enter viewport
+        threshold: 0.01,
+      }
+    );
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
       }
     };
   }, []);
@@ -134,6 +171,23 @@ export default function MediaDrawer() {
   }, [scenes]);
 
   const uploadedMedia: MediaItem[] = []; // TODO: Get from project state when available
+  
+  // Character references
+  const characterReferences = useMemo(() => {
+    const refs: MediaItem[] = [];
+    if (project?.characterReferences && project.characterReferences.length > 0) {
+      project.characterReferences.forEach((url, index) => {
+        refs.push({
+          id: `char-ref-${index}`,
+          type: 'image' as const,
+          url,
+          metadata: { isCharacterReference: true },
+        });
+      });
+    }
+    return refs;
+  }, [project]);
+  
   const finalVideo = project?.finalVideoUrl;
 
   // Drag and drop handler
@@ -205,6 +259,7 @@ export default function MediaDrawer() {
   const renderMediaThumbnail = (item: MediaItem) => {
     const isSelected = mediaDrawer.selectedItems.includes(item.id);
     const hasVideoError = videoErrors[item.id] || false;
+    const isVisible = visibleItems.has(item.id);
 
     const handleClick = (e: React.MouseEvent) => {
       // Clear any pending single-click timeout
@@ -233,6 +288,23 @@ export default function MediaDrawer() {
     return (
       <div
         key={item.id}
+        ref={(el) => {
+          if (el) {
+            thumbnailRefsMap.current.set(item.id, el);
+            // Observe this element when it mounts
+            if (observerRef.current) {
+              observerRef.current.observe(el);
+            }
+          } else {
+            // Unobserve when it unmounts
+            const existingEl = thumbnailRefsMap.current.get(item.id);
+            if (existingEl && observerRef.current) {
+              observerRef.current.unobserve(existingEl);
+            }
+            thumbnailRefsMap.current.delete(item.id);
+          }
+        }}
+        data-item-id={item.id}
         draggable
         onDragStart={(e) => handleDragStart(e, item.id, item.type)}
         onDragEnd={handleDragEnd}
@@ -243,7 +315,12 @@ export default function MediaDrawer() {
         }`}
         onClick={handleClick}
       >
-        {item.type === 'image' || item.type === 'frame' ? (
+        {!isVisible ? (
+          // Placeholder while not visible
+          <div className="aspect-video bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-gray-300 dark:border-gray-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : item.type === 'image' || item.type === 'frame' ? (
           <img
             src={item.url}
             alt={item.prompt || 'Media'}
@@ -252,23 +329,53 @@ export default function MediaDrawer() {
           />
         ) : item.type === 'video' && !hasVideoError ? (
           <video
+            ref={(el) => {
+              if (el) {
+                videoRefsMap.current.set(item.id, el);
+              } else {
+                videoRefsMap.current.delete(item.id);
+              }
+            }}
             src={item.url}
             className="w-full h-full object-cover aspect-video"
             muted
             playsInline
-            preload="metadata"
+            preload="none"
             onMouseEnter={(e) => {
-              // Play video on hover for preview
+              // Add delay before playing to prevent accidental loads
               const video = e.currentTarget;
-              video.play().catch(() => {
-                // Ignore autoplay errors
-              });
+              const timeoutId = setTimeout(() => {
+                // Pause other videos
+                if (playingVideoId && playingVideoId !== item.id) {
+                  const otherVideo = videoRefsMap.current.get(playingVideoId);
+                  if (otherVideo) {
+                    otherVideo.pause();
+                    otherVideo.currentTime = 0;
+                  }
+                }
+                // Play this video
+                setPlayingVideoId(item.id);
+                video.play().catch(() => {
+                  // Ignore autoplay errors
+                });
+                videoHoverTimeoutsMap.current.delete(item.id);
+              }, 200);
+              videoHoverTimeoutsMap.current.set(item.id, timeoutId);
             }}
             onMouseLeave={(e) => {
+              // Clear pending timeout
+              const timeoutId = videoHoverTimeoutsMap.current.get(item.id);
+              if (timeoutId) {
+                clearTimeout(timeoutId);
+                videoHoverTimeoutsMap.current.delete(item.id);
+              }
               // Pause video when not hovering
               const video = e.currentTarget;
               video.pause();
               video.currentTime = 0; // Reset to beginning
+              if (playingVideoId === item.id) {
+                setPlayingVideoId(null);
+              }
             }}
             onError={() => {
               // Mark this video as having an error
@@ -421,6 +528,15 @@ export default function MediaDrawer() {
 
       {/* Media Sections */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
+        {/* Character References */}
+        {characterReferences.length > 0 && renderSection(
+          'Character References',
+          'character-refs',
+          characterReferences,
+          <ImageIcon className="w-4 h-4" />,
+          'No character references'
+        )}
+
         {/* Generated Images */}
         {renderSection(
           'Generated Images',

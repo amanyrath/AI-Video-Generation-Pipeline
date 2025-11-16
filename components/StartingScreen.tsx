@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import CombinedInput from './CombinedInput';
+import ImageDropZone from './ImageDropZone';
+import Take5Wizard from './Take5Wizard';
 import DevPanel from './workspace/DevPanel';
 import { StartingScreenProps } from '@/lib/types/components';
 import { useProjectStore } from '@/lib/state/project-store';
 import { createProject, uploadImages } from '@/lib/api-client';
-import { Settings } from 'lucide-react';
+import { Settings, ArrowRight, Image, X } from 'lucide-react';
 
 export default function StartingScreen({
   onCreateProject,
@@ -17,40 +18,88 @@ export default function StartingScreen({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDevPanelOpen, setIsDevPanelOpen] = useState(false);
+  const [prompt, setPrompt] = useState('');
+  const [images, setImages] = useState<File[]>([]);
+  const [currentStep, setCurrentStep] = useState<number>(0); // 0 = initial prompt, 1-5 = wizard steps
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   const router = useRouter();
   const { createProject: createProjectInStore, addChatMessage } = useProjectStore();
 
-  const handleSubmit = async (message: string, images?: File[]) => {
-    if (!message.trim()) return;
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter(file => 
+      file.type.startsWith('image/')
+    );
+    if (files.length > 0) {
+      setImages(prevImages => [...prevImages, ...files]);
+    }
+  };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files).filter(file => 
+      file.type.startsWith('image/')
+    );
+
+    if (files.length > 0) {
+      setImages(prevImages => [...prevImages, ...files]);
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setImages(prevImages => prevImages.filter((_, i) => i !== index));
+  };
+
+  const handleInitialPrompt = () => {
+    if (!prompt.trim() || loading) return;
+    
+    // Trigger crumble animation
+    setIsTransitioning(true);
+    
+    // After animation, show wizard
+    setTimeout(() => {
+      setCurrentStep(1);
+      setIsTransitioning(false);
+    }, 800);
+  };
+
+  const handleWizardSubmit = async (combinedPrompt: string, wizardImages?: File[], duration?: number) => {
     setError(null);
     setIsLoading(true);
 
     try {
-      // Extract duration from message if specified
-      const durationMatch = message.match(/\b(15s|30s|60s|15|30|60)\b/i);
-      if (durationMatch) {
-        const duration = parseInt(durationMatch[1].replace('s', ''));
-        if ([15, 30, 60].includes(duration)) {
-          setTargetDuration(duration);
-        }
-      }
-
-      // Create project in store (this already adds the user message)
-      createProjectInStore(message, targetDuration);
+      // Combine initial prompt with wizard responses
+      const finalPrompt = `${prompt}\n\n${combinedPrompt}`;
+      createProjectInStore(finalPrompt, duration || targetDuration);
       const projectId = useProjectStore.getState().project?.id;
 
-      // Upload images if provided and get URLs for storyboard generation
+      // Upload all images (initial + wizard)
       let referenceImageUrls: string[] = [];
-      if (images && images.length > 0 && projectId) {
+      const allImages = [...images, ...(wizardImages || [])];
+      if (allImages && allImages.length > 0 && projectId) {
         try {
           addChatMessage({
             role: 'agent',
-            content: `Uploading ${images.length} image(s)...`,
+            content: `Uploading ${allImages.length} image(s)...`,
             type: 'status',
           });
-          const uploadResult = await uploadImages(images, projectId);
+          const uploadResult = await uploadImages(allImages, projectId);
           referenceImageUrls = uploadResult.urls || [];
           addChatMessage({
             role: 'agent',
@@ -64,37 +113,32 @@ export default function StartingScreen({
             content: 'Warning: Image upload failed. Continuing without reference images.',
             type: 'error',
           });
-          // Continue with storyboard generation even if image upload fails
         }
       }
 
-      // Add agent message
+      // Generate storyboard
       addChatMessage({
         role: 'agent',
         content: 'Generating storyboard...',
         type: 'status',
       });
 
-      // Generate storyboard with reference images
-      const result = await createProject(message, targetDuration, referenceImageUrls);
+      const result = await createProject(finalPrompt, duration || targetDuration, referenceImageUrls);
 
       if (!result.storyboard.success || !result.storyboard.scenes) {
         throw new Error(result.storyboard.error || 'Failed to generate storyboard');
       }
 
-      // Update store with storyboard
       useProjectStore.getState().setStoryboard(result.storyboard.scenes);
 
-      // Add success message
       addChatMessage({
         role: 'agent',
         content: `✓ Storyboard generated with ${result.storyboard.scenes.length} scenes`,
         type: 'status',
       });
 
-      // Call external onCreateProject if provided
       if (onCreateProject) {
-        await onCreateProject(message, images, targetDuration);
+        await onCreateProject(finalPrompt, allImages.length > 0 ? allImages : undefined, duration || targetDuration);
       }
 
       // Navigate to workspace
@@ -121,55 +165,173 @@ export default function StartingScreen({
   const loading = isLoading || externalLoading;
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-50 dark:bg-gray-900 relative">
+    <div 
+      className="min-h-screen flex flex-col items-center justify-center p-6 cinematic-gradient relative overflow-hidden"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay indicator */}
+      {isDragging && (
+        <div className="absolute inset-0 bg-white/10 backdrop-blur-sm z-50 flex items-center justify-center border-4 border-dashed border-white/40">
+          <div className="text-center">
+            <p className="text-2xl text-white font-semibold mb-2">Drop images here</p>
+            <p className="text-white/60">Add reference images for your project</p>
+          </div>
+        </div>
+      )}
+
+      {/* Large Background Text - Monologue style */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
+        <h1 className="text-[20vw] md:text-[18vw] font-light text-white/10 tracking-tighter select-none whitespace-nowrap leading-none">
+          Take 5
+        </h1>
+      </div>
+      
+      {/* Top Left Logo */}
+      <div className="fixed top-6 left-6 z-40">
+        <h1 className="text-2xl font-light text-white tracking-tighter select-none whitespace-nowrap leading-none">
+          Take 5
+        </h1>
+      </div>
+      
       {/* Dev Panel Toggle Button */}
       <button
         onClick={() => setIsDevPanelOpen(!isDevPanelOpen)}
-        className="fixed top-4 right-4 z-40 p-2 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-600 shadow-sm transition-colors"
+        className="fixed top-6 right-6 z-40 p-2.5 bg-white/5 text-white/60 rounded-lg hover:bg-white/10 hover:text-white/80 border border-white/10 backdrop-blur-sm transition-all"
         title="Model Configuration"
       >
-        <Settings className="w-5 h-5" />
+        <Settings className="w-4 h-4" />
       </button>
 
-      <div className="w-full max-w-4xl space-y-8">
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
-            AI Video Generation Pipeline
-          </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-400">
-            Transform your ideas into professional video advertisements
-          </p>
-        </div>
-
-        {/* Main Input Area */}
-        <div className="space-y-6">
-          {/* Combined Input */}
-          <CombinedInput
-            onSubmit={handleSubmit}
-            placeholder="Describe your video idea... (e.g., 'Luxury watch ad with golden hour lighting')"
-            disabled={loading}
-            autoFocus={true}
-            maxFiles={5}
-            maxSizeMB={10}
-            preserveValueOnSubmit={loading} // Keep text visible during loading
-          />
-
-          {/* Error Message */}
-          {error && (
-            <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg animate-shake">
-              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      <div className="relative z-10 w-full max-w-6xl px-6">
+        {currentStep === 0 ? (
+          /* Initial Prompt Screen - Monologue style */
+          <div className={`space-y-8 ${isTransitioning ? 'animate-crumble' : 'animate-fade-in'}`}>
+            {/* Tagline */}
+            <div className="text-center mb-12 w-full overflow-x-hidden">
+              <h2 className="text-[36px] uppercase text-white/80 tracking-[0.5em] whitespace-nowrap" style={{ fontFamily: 'Porsche911, sans-serif' }}>
+                Build your vision
+              </h2>
             </div>
-          )}
 
-          {/* Loading Indicator */}
-          {loading && (
-            <div className="flex items-center justify-center gap-2 text-gray-600 dark:text-gray-400">
-              <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-              <span>Generating storyboard...</span>
+            {/* Main Prompt Box - Replaces the white device box */}
+            <div className="relative group">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    handleInitialPrompt();
+                  }
+                }}
+                placeholder="Create a cinematic advertisement for a Porsche 911"
+                disabled={loading}
+                rows={6}
+                className="w-full px-8 py-6 bg-white/[0.02] border border-white/20 rounded-3xl text-white text-xl font-light placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/[0.05] backdrop-blur-sm transition-all resize-none disabled:opacity-50 disabled:cursor-not-allowed shadow-2xl"
+              />
+              {/* Gallery Icon - Bottom Left */}
+              <input
+                type="file"
+                id="image-upload"
+                accept="image/*"
+                multiple
+                onChange={handleFileInput}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => document.getElementById('image-upload')?.click()}
+                className="absolute bottom-4 left-4 p-2 text-white/20 hover:text-white/50 transition-colors"
+                title="Add reference images"
+              >
+                <Image className="w-5 h-5" />
+              </button>
             </div>
-          )}
-        </div>
+
+            {/* Image Previews */}
+            {images.length > 0 && (
+              <div className="flex flex-wrap gap-3 animate-slide-down">
+                {images.map((image, index) => (
+                  <div key={index} className="relative group/image">
+                    <img
+                      src={URL.createObjectURL(image)}
+                      alt={`Reference ${index + 1}`}
+                      className="w-24 h-24 object-cover rounded-lg border border-white/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeImage(index)}
+                      className="absolute -top-2 -right-2 p-1 bg-white/90 hover:bg-white rounded-full text-black transition-all opacity-0 group-hover/image:opacity-100"
+                      title="Remove image"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Continue Button */}
+            <div className="flex items-center justify-center pt-6">
+              <button
+                onClick={handleInitialPrompt}
+                disabled={!prompt.trim() || loading}
+                className="group relative px-10 py-5 bg-white text-black rounded-full text-lg font-medium hover:bg-white/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-3 shadow-2xl shadow-white/20"
+              >
+                <span>Continue</span>
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </button>
+            </div>
+
+            {/* 5 Dots Indicator - Shows progression through steps */}
+            <div className="flex items-center justify-center gap-3 pt-12">
+              {[0, 1, 2, 3, 4].map((step) => (
+                <div
+                  key={step}
+                  className={`h-2 rounded-full transition-all duration-300 ${
+                    step === 0
+                      ? 'w-8 bg-white/60'
+                      : 'w-2 bg-white/20'
+                  }`}
+                />
+              ))}
+            </div>
+
+            {/* Helper Text */}
+            <div className="text-center text-sm text-white/40 pt-4 space-y-2">
+              <p>Press Cmd+Enter to continue</p>
+              <p className="text-white/30">Five steps to a cinematic, performance-ready ad</p>
+            </div>
+          </div>
+        ) : (
+          /* Wizard Steps - Appear after crumble animation */
+          <div className="animate-fade-in space-y-6">
+            <Take5Wizard 
+              onSubmit={handleWizardSubmit} 
+              disabled={loading}
+              initialPrompt={prompt}
+              initialImages={images}
+              currentStep={currentStep}
+              onStepChange={setCurrentStep}
+            />
+            
+            {/* Error Message */}
+            {error && (
+              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl backdrop-blur-sm animate-shake">
+                <p className="text-sm text-red-400">{error}</p>
+              </div>
+            )}
+            
+            {/* Loading Indicator */}
+            {loading && (
+              <div className="flex items-center justify-center gap-3 text-white/60">
+                <div className="w-5 h-5 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+                <span>Creating your vision...</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Dev Panel */}
@@ -177,4 +339,3 @@ export default function StartingScreen({
     </div>
   );
 }
-

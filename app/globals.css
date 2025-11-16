@@ -2,22 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@font-face {
+  font-family: 'Porsche911';
+  src: url('/fonts/911porschav3expand.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@font-face {
+  font-family: 'Porsche911';
+  src: url('/fonts/911porschav3expandital.ttf') format('truetype');
+  font-weight: normal;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  --background: #000000;
+  --foreground: #ffffff;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Cinematic gradient animation */
+@keyframes subtleGradient {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.cinematic-gradient {
+  background: linear-gradient(
+    135deg,
+    #000000 0%,
+    #0d0d0d 20%,
+    #1a1a1a 40%,
+    #0d0d0d 60%,
+    #000000 100%
+  );
+  background-size: 200% 200%;
+  animation: subtleGradient 20s ease-in-out infinite;
+  will-change: background-position;
 }
 
 @layer utilities {
@@ -40,7 +78,7 @@ body {
 /* Animation utilities */
 @layer utilities {
   .animate-fade-in {
-    animation: fadeIn 0.3s ease-in-out;
+    animation: fadeIn 0.6s ease-in-out;
   }
   
   .animate-slide-up {
@@ -65,6 +103,10 @@ body {
   
   .animate-success {
     animation: success 0.6s ease-out;
+  }
+  
+  .animate-crumble {
+    animation: crumble 0.8s cubic-bezier(0.4, 0, 1, 1) forwards;
   }
 }
 
@@ -131,6 +173,35 @@ body {
   }
   100% {
     transform: scale(1);
+  }
+}
+
+@keyframes crumble {
+  0% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+  20% {
+    transform: scale(0.98) rotate(0.5deg);
+  }
+  40% {
+    transform: scale(0.95) rotate(-0.5deg);
+    opacity: 0.8;
+  }
+  60% {
+    transform: scale(0.85) rotate(0.3deg);
+    opacity: 0.5;
+    filter: blur(1px);
+  }
+  80% {
+    transform: scale(0.6) rotate(-0.2deg) translateY(20px);
+    opacity: 0.2;
+    filter: blur(3px);
+  }
+  100% {
+    transform: scale(0.3) rotate(0deg) translateY(50px);
+    opacity: 0;
+    filter: blur(5px);
   }
 }
 

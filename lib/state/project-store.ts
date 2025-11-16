@@ -13,6 +13,10 @@ interface ProjectStore {
   // Project state
   project: ProjectState | null;
   
+  // Character validation state
+  needsCharacterValidation: boolean;
+  hasUploadedImages: boolean;
+  
   // UI state
   viewMode: ViewMode;
   currentSceneIndex: number;
@@ -78,6 +82,14 @@ interface ProjectStore {
   navigateToWorkspace: (projectId: string) => void;
   loadProject: (projectId: string) => Promise<void>;
   
+  // Character reference management
+  setCharacterReferences: (imageUrls: string[]) => void;
+  addCharacterReference: (imageUrl: string) => void;
+  setCharacterDescription: (description: string) => void;
+  setNeedsCharacterValidation: (needs: boolean) => void;
+  setHasUploadedImages: (has: boolean) => void;
+  setUploadedImageUrls: (urls: string[]) => void;
+  
   reset: () => void;
 }
 
@@ -99,6 +111,8 @@ const initialState = {
   isWorkflowPaused: false,
   processingSceneIndex: null as number | null,
   sceneErrors: {} as Record<number, { message: string; timestamp: string; retryable: boolean }>,
+  needsCharacterValidation: false,
+  hasUploadedImages: false,
 };
 
 export const useProjectStore = create<ProjectStore>((set) => ({
@@ -390,9 +404,8 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     const scene = state.project.storyboard[sceneIndex];
     if (!scene) throw new Error('Invalid scene');
     
-    // Reference images would come from uploaded images for object consistency
-    // For now, using empty array as placeholder
-    const referenceImageUrls: string[] = [];
+    // Use character references as reference images for object consistency
+    const referenceImageUrls: string[] = state.project.characterReferences || [];
     
     // OPTION 1: Reference image is the PRIMARY driver for ALL scenes
     // Use reference image as seed (primary) + seed frame via IP-Adapter (for continuity in scenes 1-4)
@@ -555,6 +568,67 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       state.setSceneError(sceneIndex, { message: errorMessage, retryable: true });
       throw error;
     }
+  },
+  
+  // Character reference management
+  setCharacterReferences: (imageUrls: string[]) => {
+    set((state) => {
+      if (!state.project) return state;
+      return {
+        project: {
+          ...state.project,
+          characterReferences: imageUrls,
+          referenceImageUrls: imageUrls, // Also set as reference images for scene generation
+        },
+      };
+    });
+  },
+  
+  addCharacterReference: (imageUrl: string) => {
+    set((state) => {
+      if (!state.project) return state;
+      const characterReferences = state.project.characterReferences || [];
+      const referenceImageUrls = state.project.referenceImageUrls || [];
+      return {
+        project: {
+          ...state.project,
+          characterReferences: [...characterReferences, imageUrl],
+          referenceImageUrls: [...referenceImageUrls, imageUrl],
+        },
+      };
+    });
+  },
+  
+  setCharacterDescription: (description: string) => {
+    set((state) => {
+      if (!state.project) return state;
+      return {
+        project: {
+          ...state.project,
+          characterDescription: description,
+        },
+      };
+    });
+  },
+  
+  setNeedsCharacterValidation: (needs: boolean) => {
+    set({ needsCharacterValidation: needs });
+  },
+  
+  setHasUploadedImages: (has: boolean) => {
+    set({ hasUploadedImages: has });
+  },
+  
+  setUploadedImageUrls: (urls: string[]) => {
+    set((state) => {
+      if (!state.project) return state;
+      return {
+        project: {
+          ...state.project,
+          uploadedImageUrls: urls,
+        },
+      };
+    });
   },
   
   reset: () => {

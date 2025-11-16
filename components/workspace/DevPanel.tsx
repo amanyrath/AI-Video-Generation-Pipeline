@@ -46,7 +46,7 @@ function ModelSelector({ label, description, category, options, selectedId, onCh
       >
         {options.map((model) => (
           <option key={model.id} value={model.id}>
-            {model.name} - {model.provider}
+            {model.name} - {model.provider}{model.description ? ` • ${model.description}` : ''}
           </option>
         ))}
       </select>
@@ -54,6 +54,23 @@ function ModelSelector({ label, description, category, options, selectedId, onCh
         <p className="text-xs text-gray-500 dark:text-gray-400 italic">
           {selectedModel.description}
         </p>
+      )}
+      {selectedModel?.supportedInputs && selectedModel.supportedInputs.length > 0 && (
+        <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-600">
+          <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            Supported Inputs:
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {selectedModel.supportedInputs.map((input) => (
+              <span
+                key={input}
+                className="inline-block px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded font-mono"
+              >
+                {input}
+              </span>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

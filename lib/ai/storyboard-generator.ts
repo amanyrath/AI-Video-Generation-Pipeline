@@ -31,31 +31,49 @@ export function setRuntimeTextModel(model: string) {
 /**
  * System prompt for storyboard generation
  * From PRD Appendix: Prompt Templates
+ *
+ * Updated to enforce structured scene descriptions for advertising, with a default
+ * bias toward product and automotive work and an Arri Alexa commercial look.
  */
-const STORYBOARD_SYSTEM_PROMPT = `You are a professional video storyboard creator specializing in advertising content.
+const STORYBOARD_SYSTEM_PROMPT = `You are a professional video storyboard creator specializing in performance-focused advertising,
+with particular strength in product and automotive commercials.
 
-Given a product description and ad goal, create exactly 5 scenes that tell a compelling visual story.
+Given a short creative brief for a video advertisement, create exactly 5 scenes that tell a cinematic, conversion-minded story.
 
-Each scene should:
-- Be 2-4 seconds long
-- Have a clear visual focus
-- Connect logically to the next scene
-- Include detailed image generation prompts
+For each scene:
+- Duration: 2–4 seconds
+- Clear visual focus and logical progression from the previous scene
+- Written as a single, concrete film shot the crew could execute on set
 
-Output format:
+Each scene's description must follow this structure in one sentence:
+[SHOT TYPE] + [SUBJECT] + [ACTION] + [STYLE] + [CAMERA MOVEMENT] + [AUDIO CUES]
+
+Where:
+- SHOT TYPE: e.g. "Wide shot", "Low tracking shot", "Close-up", "Over-the-shoulder", etc.
+- SUBJECT: the concrete subject (car, driver, product, hands, environment, etc.)
+- ACTION: what is happening on screen in this moment
+- STYLE: visual look, lighting, mood, and references (e.g. "Leigh Powis–style commercial film, tight and action-driven")
+- CAMERA MOVEMENT: how the camera moves (e.g. "aggressive tracking", "slow push-in", "handheld", or "static")
+- AUDIO CUES: key sound design and music elements that define the moment (engines, tires, ambience, score, VO, etc.)
+
+Unless the brief clearly specifies otherwise, assume:
+- The spot is shot on Arri Alexa with a high-end commercial finish
+- The goal is to showcase the product or vehicle in a bold, cinematic way
+
+Output strictly valid JSON in this format:
 {
   "scenes": [
     {
       "order": 0,
-      "description": "Brief narrative description",
-      "imagePrompt": "Detailed prompt for image generation with style, lighting, composition",
+      "description": "Full sentence using the structure above",
+      "imagePrompt": "Detailed prompt for image generation that matches the description, including shot type, subject, action, style, lighting, composition, camera movement, and any audio cues that can be implied visually.",
       "duration": 3
     },
     ...
   ]
 }
 
-Keep prompts visual and specific. Avoid abstract concepts.`;
+Keep prompts specific, visual, and production-ready. Avoid vague marketing language like "brand awareness" or "emotional connection" in the scene descriptions; show those ideas through concrete shots.`;
 
 // ============================================================================
 // Types
@@ -130,7 +148,12 @@ async function callOpenRouterAPI(
     console.warn('[OpenRouter] API key format may be invalid. Expected format: sk-or-v1-... or sk-...');
   }
 
-  const userPrompt = `Create exactly 5 scenes for a ${targetDuration}-second video advertisement: ${prompt}
+  const userPrompt = `You are creating a performance-focused advertising storyboard (with strong support for product and automotive spots) for a ${targetDuration}-second video ad.
+
+Creative brief from the user:
+${prompt}
+
+Use the structure [SHOT TYPE] + [SUBJECT] + [ACTION] + [STYLE] + [CAMERA MOVEMENT] + [AUDIO CUES] for each of the 5 scene descriptions.
 
 Ensure the total duration of all scenes equals ${targetDuration} seconds (±2 seconds tolerance).`;
 
@@ -605,4 +628,3 @@ export function createErrorResponse(error: unknown): StoryboardResponse {
     retryable,
   };
 }
-

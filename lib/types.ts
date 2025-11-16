@@ -92,6 +92,9 @@ export interface ProjectState {
   finalVideoUrl?: string;
   finalVideoS3Key?: string;
   referenceImageUrls?: string[]; // Optional: URLs of uploaded reference images for object consistency
+  characterReferences?: string[]; // Optional: URLs of validated character/product reference images
+  characterDescription?: string; // Optional: Description of the character/product
+  uploadedImageUrls?: string[]; // Optional: Original uploaded image URLs (before background removal)
 }
 
 // Extended Scene type for project state (includes generation state)

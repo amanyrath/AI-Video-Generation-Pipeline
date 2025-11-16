@@ -133,6 +133,7 @@ export default function VideoPlayer({
         poster={poster}
         className="w-full h-full"
         onClick={togglePlay}
+        preload="metadata"
       />
 
       {/* Controls Overlay */}

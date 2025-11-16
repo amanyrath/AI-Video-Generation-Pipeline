@@ -79,11 +79,11 @@ export default function ImageDropZone({
       <div
         {...getRootProps()}
         className={`
-          border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors
+          border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all backdrop-blur-sm
           ${
             isDragActive
-              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-              : 'border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600'
+              ? 'border-white/30 bg-white/10'
+              : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
           }
           ${files.length >= maxFiles ? 'opacity-50 cursor-not-allowed' : ''}
         `}
@@ -92,18 +92,18 @@ export default function ImageDropZone({
         <div className="flex flex-col items-center gap-2">
           {files.length === 0 ? (
             <>
-              <Upload className="w-8 h-8 text-gray-400" />
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+              <Upload className="w-6 h-6 text-white/40" />
+              <p className="text-sm text-white/50">
                 Drag and drop images here, or click to select
               </p>
-              <p className="text-xs text-gray-500 dark:text-gray-500">
+              <p className="text-xs text-white/30">
                 {acceptedTypes.join(', ').replace(/image\//g, '')} up to {maxSizeMB}MB each
               </p>
             </>
           ) : (
             <>
-              <ImageIcon className="w-8 h-8 text-gray-400" />
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+              <ImageIcon className="w-6 h-6 text-white/40" />
+              <p className="text-sm text-white/50">
                 {files.length} image{files.length !== 1 ? 's' : ''} selected
                 {files.length < maxFiles && ' (click to add more)'}
               </p>
@@ -113,25 +113,25 @@ export default function ImageDropZone({
       </div>
 
       {previewUrls.length > 0 && (
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {previewUrls.map((url, index) => (
             <div key={index} className="relative group">
               <img
                 src={url}
                 alt={`Preview ${index + 1}`}
-                className="w-full h-32 object-cover rounded-lg border border-gray-200 dark:border-gray-700"
+                className="w-full h-24 object-cover rounded-lg border border-white/10 bg-white/5"
               />
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   removeFile(index);
                 }}
-                className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute top-1.5 right-1.5 p-1 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
                 aria-label="Remove image"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3 h-3" />
               </button>
-              <p className="mt-1 text-xs text-gray-500 truncate">
+              <p className="mt-1 text-xs text-white/40 truncate">
                 {files[index].name}
               </p>
             </div>

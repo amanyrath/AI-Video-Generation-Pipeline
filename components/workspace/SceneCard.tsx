@@ -5,7 +5,7 @@ import { CheckCircle2, Clock, Loader2, AlertCircle, Image as ImageIcon, Video } 
 import { useProjectStore } from '@/lib/state/project-store';
 import { generateImage, pollImageStatus, generateVideo, pollVideoStatus } from '@/lib/api-client';
 import { ImageGenerationRequest } from '@/lib/types';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface SceneCardProps {
   scene: Scene;
@@ -38,6 +38,34 @@ export default function SceneCard({
   } = useProjectStore();
   const [isGenerating, setIsGenerating] = useState(false);
   const sceneError = sceneErrors[sceneIndex];
+  const [isVisible, setIsVisible] = useState(sceneIndex < 3); // First 3 cards visible by default
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Intersection observer for lazy loading thumbnail
+  useEffect(() => {
+    // Skip if already visible
+    if (isVisible || !cardRef.current) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect(); // Stop observing once visible
+        }
+      },
+      {
+        root: null,
+        rootMargin: '50px', // Load 50px before card enters viewport
+        threshold: 0.01,
+      }
+    );
+
+    observer.observe(cardRef.current);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [isVisible]);
 
   const handleClick = () => {
     if (onClick) {
@@ -278,6 +306,7 @@ export default function SceneCard({
 
   return (
     <div
+      ref={cardRef}
       onClick={handleClick}
       className={`relative p-4 rounded-lg border-2 cursor-pointer transition-all duration-200 group animate-fade-in ${
         isSelected
@@ -383,12 +412,18 @@ export default function SceneCard({
       {/* Thumbnail Preview (Phase 9.1.1) */}
       {scenes[sceneIndex]?.generatedImages?.[0] && (
         <div className="mt-3 rounded-md overflow-hidden border border-gray-200 dark:border-gray-700">
-          <img
-            src={scenes[sceneIndex].generatedImages[0].url}
-            alt={`Scene ${sceneIndex + 1} preview`}
-            className="w-full aspect-video object-cover"
-            loading="lazy"
-          />
+          {isVisible ? (
+            <img
+              src={scenes[sceneIndex].generatedImages[0].url}
+              alt={`Scene ${sceneIndex + 1} preview`}
+              className="w-full aspect-video object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <div className="w-full aspect-video bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+              <div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
         </div>
       )}
 
