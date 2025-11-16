@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { saveUploadedImage, ProcessedImage } from '@/lib/storage/image-storage';
 import { removeBackgroundIterative } from '@/lib/ai/background-remover';
 import fs from 'fs/promises';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { DEFAULT_RUNTIME_CONFIG } from '@/lib/config/model-runtime';
 
@@ -165,15 +166,44 @@ export async function POST(request: NextRequest) {
           const processedVersions: ProcessedImage[] = [];
           for (let iter = 0; iter < processedPaths.length; iter++) {
             const processedPath = processedPaths[iter];
-            
+
             // Get file stats
             const stats = await fs.stat(processedPath);
+
+            // Upload processed image to S3 using existing upload-image-s3 API
+            let processedUrl = processedPath; // Default to local path
+            let processedS3Key: string | undefined;
+
+            try {
+              // Use existing upload-image-s3 API which handles S3 upload with fallback
+              const s3Response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/upload-image-s3`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  imagePath: processedPath,
+                  projectId: projectId,
+                }),
+              });
+
+              const s3Data = await s3Response.json();
+              if (s3Data.success && s3Data.data?.s3Url) {
+                processedUrl = s3Data.data.s3Url;
+                processedS3Key = s3Data.data.s3Key;
+                console.log(`[Upload Images API] Uploaded processed image ${iter + 1} to S3`);
+              } else {
+                console.warn(`[Upload Images API] S3 upload failed for processed image ${iter + 1}, using local path`);
+              }
+            } catch (s3Error: any) {
+              console.warn(`[Upload Images API] S3 upload error for processed image ${iter + 1}:`, s3Error.message);
+              // Continue with local path if S3 fails
+            }
 
             const processedImage: ProcessedImage = {
               id: uuidv4(),
               iteration: iter + 1,
-              url: processedPath, // Local path for now
+              url: processedUrl, // S3 URL or local path
               localPath: processedPath,
+              s3Key: processedS3Key,
               size: stats.size,
               createdAt: new Date().toISOString(),
             };

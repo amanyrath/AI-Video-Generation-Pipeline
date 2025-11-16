@@ -25,13 +25,15 @@ interface CharacterVariation {
  * @param projectId Project ID for file organization
  * @param count Number of variations to generate (1-10)
  * @param generateTurnaround Whether to generate proper turnaround coverage
+ * @param referenceImages Array of reference image URLs to base generation on
  * @returns Array of generated character images with metadata
  */
 export async function generateCharacterVariation(
   description: string,
   projectId: string,
   count: number = 5,
-  generateTurnaround: boolean = false
+  generateTurnaround: boolean = false,
+  referenceImages: string[] = []
 ): Promise<CharacterVariation[]> {
   if (!description || typeof description !== 'string') {
     throw new Error('Description is required and must be a string');
@@ -210,18 +212,10 @@ async function downloadAndUploadCharacterImage(imageUrl: string, projectId: stri
   const tempPath = path.join(tempDir, filename);
   fs.writeFileSync(tempPath, buffer);
   
-  // Prefix filename with "characters-" to organize in S3
-  const s3Filename = `characters-${filename}`;
-  const s3Path = path.join(tempDir, s3Filename);
-  let currentPath = tempPath;
-  
   try {
     // Upload to S3
     console.log(`${logPrefix} Uploading to S3`);
-    fs.renameSync(tempPath, s3Path);
-    currentPath = s3Path;
-    
-    const s3Key = await uploadToS3(s3Path, projectId, {
+    const s3Key = await uploadToS3(tempPath, projectId, {
       metadata: {
         'content-type': 'image/png',
         'upload-type': 'character-generation',
@@ -229,7 +223,7 @@ async function downloadAndUploadCharacterImage(imageUrl: string, projectId: stri
     });
     
     // Clean up temp file
-    fs.unlinkSync(s3Path);
+    fs.unlinkSync(tempPath);
     
     // Get S3 URL
     const s3Url = getS3Url(s3Key);
@@ -241,8 +235,8 @@ async function downloadAndUploadCharacterImage(imageUrl: string, projectId: stri
     };
   } catch (error) {
     // Clean up temp file on error
-    if (fs.existsSync(currentPath)) {
-      fs.unlinkSync(currentPath);
+    if (fs.existsSync(tempPath)) {
+      fs.unlinkSync(tempPath);
     }
     throw error;
   }

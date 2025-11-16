@@ -157,6 +157,11 @@ export default function Take5Wizard({
                 ))}
               </div>
             </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-medium text-white/40">Optional · Reference images</p>
+              <ImageDropZone onFilesSelected={handleImagesSelected} />
+            </div>
           </div>
         );
       case 2:
@@ -200,11 +205,6 @@ export default function Take5Wizard({
                   </button>
                 ))}
               </div>
-            </div>
-
-            <div className="space-y-3">
-              <p className="text-xs font-medium text-white/40">Optional · Reference images</p>
-              <ImageDropZone onFilesSelected={handleImagesSelected} />
             </div>
           </div>
         );

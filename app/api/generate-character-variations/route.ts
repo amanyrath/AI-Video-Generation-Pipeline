@@ -12,6 +12,7 @@ interface GenerateCharacterVariationsRequest {
   description: string;
   projectId: string;
   count?: number;
+  referenceImages?: string[]; // URLs of reference images to base generation on
 }
 
 interface GenerateCharacterVariationsResponse {
@@ -59,8 +60,19 @@ export async function POST(
       );
     }
 
-    // Generate character variations
-    const images = await generateCharacterVariation(body.description, body.projectId, count);
+    // Extract reference images (optional)
+    const referenceImages = body.referenceImages && Array.isArray(body.referenceImages) 
+      ? body.referenceImages 
+      : [];
+
+    // Generate character variations with reference images
+    const images = await generateCharacterVariation(
+      body.description, 
+      body.projectId, 
+      count,
+      false, // generateTurnaround
+      referenceImages // Pass reference images
+    );
 
     return NextResponse.json({
       success: true,

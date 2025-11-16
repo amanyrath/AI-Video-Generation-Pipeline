@@ -212,10 +212,27 @@ export async function uploadImages(
     }
 
     const result = await response.json();
-    
+
     // Extract URLs from uploaded images
-    const urls = result.images?.map((img: any) => img.url) || [];
-    const paths = result.images?.map((img: any) => img.localPath) || [];
+    // Prefer the last processed version (most refined background removal) if available
+    const urls = result.images?.map((img: any) => {
+      // If background-removed versions exist, use the last one (most iterations)
+      if (img.processedVersions && img.processedVersions.length > 0) {
+        const lastProcessed = img.processedVersions[img.processedVersions.length - 1];
+        return lastProcessed.url;
+      }
+      // Otherwise use original
+      return img.url;
+    }) || [];
+
+    const paths = result.images?.map((img: any) => {
+      // Same logic for paths
+      if (img.processedVersions && img.processedVersions.length > 0) {
+        const lastProcessed = img.processedVersions[img.processedVersions.length - 1];
+        return lastProcessed.localPath;
+      }
+      return img.localPath;
+    }) || [];
 
     return {
       ...result,

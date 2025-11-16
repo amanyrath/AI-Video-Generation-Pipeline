@@ -31,6 +31,7 @@ export default function CharacterValidationScreen() {
     setCharacterReferences, 
     hasUploadedImages,
     setUploadedImageUrls,
+    setCharacterDescription,
   } = useProjectStore();
 
   const [characterImages, setCharacterImages] = useState<CharacterImage[]>([]);
@@ -39,6 +40,12 @@ export default function CharacterValidationScreen() {
   const [isProcessingUploads, setIsProcessingUploads] = useState(false);
   const [additionalImages, setAdditionalImages] = useState<File[]>([]);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [showConfirmation, setShowConfirmation] = useState(true); // Show confirmation first
+  const [editingDescription, setEditingDescription] = useState(false);
+  const [tempDescription, setTempDescription] = useState(''); // Editing buffer for clean description
+  const [cleanDescription, setCleanDescription] = useState<string>(''); // Extracted clean description for display
+  const [isExtractingDescription, setIsExtractingDescription] = useState(false);
+  const [hasAttemptedExtraction, setHasAttemptedExtraction] = useState(false); // Prevent infinite loops
   const [feedback, setFeedback] = useState<FeedbackState>({
     styleValue: 50,
     detailedValue: 50,
@@ -47,8 +54,6 @@ export default function CharacterValidationScreen() {
     textFeedback: '',
   });
   const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
-  const [editingDescription, setEditingDescription] = useState(false);
-  const [tempDescription, setTempDescription] = useState(project?.characterDescription || '');
 
   const handleSkip = useCallback(() => {
     // Skip character validation and go directly to workspace
@@ -124,16 +129,16 @@ export default function CharacterValidationScreen() {
       // Build style-aware prompt based on feedback
       const stylePrompt = buildStylePrompt(project.characterDescription, feedback);
 
-      // Generate single character image (simplified for faster processing)
-      // FUTURE: Increase count to 10 for multiple turnaround variations
+      // Generate 5 character variations based on reference photos
+      // Images are NOT upscaled yet - upscaling happens after user selection
       const response = await fetch('/api/generate-character-variations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: stylePrompt,
           projectId: project.id,
-          count: 1, // Generate single image for speed (change to 10 for multiple variations)
-          // generateTurnaround: true, // FUTURE: Enable for turnaround generation
+          count: 5, // Generate 5 variations for user selection
+          referenceImages: project.uploadedImageUrls || [], // Base on user's reference photos
         }),
       });
 
@@ -159,62 +164,22 @@ export default function CharacterValidationScreen() {
       const bgRemovalData = await bgRemovalResponse.json();
 
       if (bgRemovalData.success && bgRemovalData.processedImages) {
-        const processedUrls = bgRemovalData.processedImages.map((img: { url: string }) => img.url);
-        
-        // Step 2: Upscale all processed images 4x for high quality
-        console.log('[CharacterValidation] Upscaling images for high quality assets...');
-        const upscaleResponse = await fetch('/api/upscale-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageUrls: processedUrls,
-            projectId: project.id,
-          }),
-        });
-
-        const upscaleData = await upscaleResponse.json();
-
-        if (upscaleData.success && upscaleData.upscaledImages) {
-          // Map with metadata from original generation
-          setCharacterImages(
-            upscaleData.upscaledImages.map((img: { id: string; url: string }, index: number) => {
-              const originalMetadata = data.images[index];
-              return {
-                id: img.id,
-                url: img.url,
-                selected: index === 0, // Auto-select first (and only) image
-                isUploaded: false,
-                type: originalMetadata?.type || 'turnaround',
-                angle: originalMetadata?.angle || 0,
-                scale: originalMetadata?.scale || 'full',
-              };
-            })
-          );
-          // Auto-select the generated image
-          if (upscaleData.upscaledImages.length > 0) {
-            setSelectedImageId(upscaleData.upscaledImages[0].id);
-          }
-        } else {
-          // Fallback to non-upscaled images
-          console.warn('[CharacterValidation] Upscaling failed, using non-upscaled images');
-          setCharacterImages(
-            bgRemovalData.processedImages.map((img: { id: string; url: string }, index: number) => {
-              const originalMetadata = data.images[index];
-              return {
-                id: img.id,
-                url: img.url,
-                selected: index === 0, // Auto-select first image
-                isUploaded: false,
-                type: originalMetadata?.type || 'turnaround',
-                angle: originalMetadata?.angle || 0,
-                scale: originalMetadata?.scale || 'full',
-              };
-            })
-          );
-          if (bgRemovalData.processedImages.length > 0) {
-            setSelectedImageId(bgRemovalData.processedImages[0].id);
-          }
-        }
+        // Use processed images (background removed, NOT upscaled yet)
+        // Upscaling will happen in background after user confirms selection
+        setCharacterImages(
+          bgRemovalData.processedImages.map((img: { id: string; url: string }, index: number) => {
+            const originalMetadata = data.images[index];
+            return {
+              id: img.id,
+              url: img.url,
+              selected: false, // User will select which ones they want
+              isUploaded: false,
+              type: originalMetadata?.type || 'turnaround',
+              angle: originalMetadata?.angle || 0,
+              scale: originalMetadata?.scale || 'full',
+            };
+          })
+        );
       } else {
         // Fallback: use original generated images without background removal
         console.warn('[CharacterValidation] Background removal failed, using original images');
@@ -222,16 +187,13 @@ export default function CharacterValidationScreen() {
           data.images.map((img: any, index: number) => ({
             id: img.id,
             url: img.url,
-            selected: index === 0, // Auto-select first image
+            selected: false, // User will select which ones they want
             isUploaded: false,
             type: img.type || 'turnaround',
             angle: img.angle || 0,
             scale: img.scale || 'full',
           }))
         );
-        if (data.images.length > 0) {
-          setSelectedImageId(data.images[0].id);
-        }
       }
     } catch (error) {
       console.error('Error generating character variations:', error);
@@ -242,8 +204,81 @@ export default function CharacterValidationScreen() {
     }
   }, [project?.characterDescription, project?.id, feedback]);
 
-  // Initialize on mount - either process uploaded images or generate variations
+  // Initialize on mount - wait for user confirmation before generation
   useEffect(() => {
+    // Don't auto-start generation - wait for user confirmation
+    // Just show the confirmation screen with description and reference images
+  }, []);
+
+  // Extract clean character description from full prompt on mount (Issue #1 fix: runs once)
+  useEffect(() => {
+    const extractCleanDescription = async () => {
+      // Only run once to prevent infinite loops
+      if (!project?.characterDescription || hasAttemptedExtraction) return;
+      
+      setHasAttemptedExtraction(true);
+      setIsExtractingDescription(true);
+      
+      try {
+        const response = await fetch('/api/extract-character-description', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fullPrompt: project.characterDescription }),
+        });
+
+        const data = await response.json();
+        if (data.success && data.characterDescription) {
+          setCleanDescription(data.characterDescription);
+          setTempDescription(data.characterDescription); // Initialize edit buffer with clean description (Issue #9 fix)
+        } else {
+          // Fallback: use first sentence instead of full prompt (Issue #6 fix)
+          const firstSentence = project.characterDescription.split(/[.!?]/)[0].trim();
+          const fallback = firstSentence || 'Character from your video prompt';
+          setCleanDescription(fallback);
+          setTempDescription(fallback);
+        }
+      } catch (error) {
+        console.error('Failed to extract clean description:', error);
+        // Fallback: use first sentence instead of full prompt (Issue #6 fix)
+        const firstSentence = project.characterDescription.split(/[.!?]/)[0].trim();
+        const fallback = firstSentence || 'Character from your video prompt';
+        setCleanDescription(fallback);
+        setTempDescription(fallback);
+      } finally {
+        setIsExtractingDescription(false);
+      }
+    };
+
+    extractCleanDescription();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
+
+  const handleEditDescription = () => {
+    setEditingDescription(true);
+    // tempDescription is already set to cleanDescription from extraction
+  };
+
+  const handleSaveDescription = () => {
+    // Issue #2 fix: When saving edited description, update both clean and full descriptions
+    // and re-extract to stay in sync
+    setCleanDescription(tempDescription);
+    setCharacterDescription(tempDescription); // Update the full description in store
+    setEditingDescription(false);
+    
+    // Reset extraction flag so it can re-extract if needed
+    setHasAttemptedExtraction(false);
+  };
+
+  const handleCancelEdit = () => {
+    // Reset to the current clean description
+    setTempDescription(cleanDescription);
+    setEditingDescription(false);
+  };
+
+  const handleConfirmGeneration = () => {
+    // User confirmed - start generation
+    setShowConfirmation(false);
+    
     if (hasUploadedImages && project?.uploadedImageUrls && project.uploadedImageUrls.length > 0) {
       // Process uploaded images - remove background
       processUploadedImages();
@@ -254,7 +289,7 @@ export default function CharacterValidationScreen() {
       // No validation needed
       handleSkip();
     }
-  }, [hasUploadedImages, project?.uploadedImageUrls, project?.characterDescription, project?.id, processUploadedImages, generateCharacterVariations, handleSkip]);
+  };
 
   const buildStylePrompt = (description: string, feedback: FeedbackState): string => {
     const parts: string[] = [description];
@@ -299,13 +334,23 @@ export default function CharacterValidationScreen() {
   };
 
   const handleImageSelect = (imageId: string) => {
-    setSelectedImageId(imageId);
+    // Toggle selection (allow multiple selections)
     setCharacterImages((prev) =>
       prev.map((img) => ({
         ...img,
-        selected: img.id === imageId,
+        selected: img.id === imageId ? !img.selected : img.selected,
       }))
     );
+    
+    // Track selected IDs for convenience
+    const newSelected = characterImages.find(img => img.id === imageId);
+    if (newSelected?.selected) {
+      // Deselecting
+      setSelectedImageId(null);
+    } else {
+      // Selecting
+      setSelectedImageId(imageId);
+    }
   };
 
   const handleRegenerate = () => {
@@ -327,11 +372,11 @@ export default function CharacterValidationScreen() {
   };
 
   const handleConfirm = async () => {
-    // Must select a character image
-    const selectedImage = characterImages.find((img) => img.selected);
+    // Get all selected images
+    const selectedImages = characterImages.filter((img) => img.selected);
 
-    if (!selectedImage) {
-      alert('Please select a character variation first');
+    if (selectedImages.length === 0) {
+      alert('Please select at least one character variation');
       return;
     }
 
@@ -360,12 +405,44 @@ export default function CharacterValidationScreen() {
       }
     }
 
-    // Set character references in store
-    const allReferences = [selectedImage.url, ...additionalImageUrls];
+    // Get URLs of selected images (not upscaled yet)
+    const selectedImageUrls = selectedImages.map(img => img.url);
+    
+    // Set character references in store (non-upscaled for now)
+    const allReferences = [...selectedImageUrls, ...additionalImageUrls];
     setCharacterReferences(allReferences);
 
-    // Navigate to workspace
+    // Navigate to workspace immediately
     router.push(`/workspace?projectId=${project?.id}`);
+
+    // Upscale selected images in the background (non-blocking)
+    console.log(`[CharacterValidation] Upscaling ${selectedImages.length} selected images in background...`);
+    upscaleInBackground(selectedImageUrls);
+  };
+
+  // Background upscaling function (doesn't block navigation)
+  const upscaleInBackground = async (imageUrls: string[]) => {
+    try {
+      const response = await fetch('/api/upscale-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrls,
+          projectId: project?.id,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success && data.upscaledImages) {
+        console.log(`[CharacterValidation] Successfully upscaled ${data.upscaledImages.length} images in background`);
+        // TODO: Update project store with upscaled versions when needed
+      } else {
+        console.warn('[CharacterValidation] Background upscaling failed, continuing with non-upscaled images');
+      }
+    } catch (error) {
+      console.error('[CharacterValidation] Background upscaling error:', error);
+      // Fail silently - user has already proceeded with non-upscaled images
+    }
   };
 
   return (
@@ -373,11 +450,125 @@ export default function CharacterValidationScreen() {
       {/* Large Background Text - Monologue style */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
         <h1 className="text-[20vw] md:text-[18vw] font-light text-white/10 tracking-tighter select-none whitespace-nowrap leading-none">
-          Validate
+          {showConfirmation ? 'Confirm' : 'Validate'}
         </h1>
       </div>
 
       <div className="relative z-10 w-full max-w-6xl mx-auto">
+        {/* Issue #3 fix: Show loading state while extracting description */}
+        {showConfirmation && isExtractingDescription ? (
+          <div className="text-center">
+            <div className="rounded-3xl border border-white/20 bg-white/10 backdrop-blur-xl shadow-2xl p-12">
+              <Loader2 className="w-12 h-12 text-white/60 animate-spin mx-auto mb-4" />
+              <h2 className="text-xl font-semibold text-white mb-2">Preparing Character Setup</h2>
+              <p className="text-white/60">Analyzing your character description...</p>
+            </div>
+          </div>
+        ) : showConfirmation ? (
+          /* Confirmation Screen - Show after extraction completes */
+          <>
+            <div className="text-center mb-8">
+              <h1 className="text-3xl font-bold text-white mb-2">
+                Review Character Setup
+              </h1>
+              <p className="text-white/60">
+                Review your character description and reference images before generation
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-white/20 bg-white/10 backdrop-blur-xl shadow-2xl p-8 space-y-6">
+              {/* Character Description Section */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-white">Character Description</h2>
+                  {!editingDescription && (
+                    <button
+                      onClick={handleEditDescription}
+                      className="text-sm text-white/60 hover:text-white transition-colors"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+                
+                {editingDescription ? (
+                  <div className="space-y-3">
+                    <textarea
+                      value={tempDescription}
+                      onChange={(e) => setTempDescription(e.target.value)}
+                      rows={4}
+                      className="w-full rounded-lg border border-white/20 bg-white/[0.02] px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/[0.05] backdrop-blur-sm transition-all resize-none"
+                      placeholder="Describe your character..."
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSaveDescription}
+                        className="px-4 py-2 rounded-lg bg-white text-black text-sm font-medium hover:bg-white/90 transition-colors"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={handleCancelEdit}
+                        className="px-4 py-2 rounded-lg border border-white/20 text-white text-sm hover:bg-white/10 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-white/5 rounded-lg border border-white/20">
+                    <p className="text-sm text-white/80">
+                      {cleanDescription || 'Character from your video prompt'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Reference Images Section */}
+              {project?.uploadedImageUrls && project.uploadedImageUrls.length > 0 && (
+                <div className="space-y-4">
+                  <h2 className="text-lg font-semibold text-white">Reference Images</h2>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
+                    {project.uploadedImageUrls.map((url, index) => (
+                      <div
+                        key={index}
+                        className="relative aspect-square rounded-lg overflow-hidden border-2 border-white/20"
+                      >
+                        <img
+                          src={url}
+                          alt={`Reference ${index + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-white/60">
+                    {project.uploadedImageUrls.length} reference image(s) will be used to generate character variations
+                  </p>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-4 border-t border-white/20">
+                <button
+                  onClick={handleSkip}
+                  className="px-6 py-3 rounded-full border border-white/20 text-white text-base font-medium hover:bg-white/10 transition-colors"
+                >
+                  Skip This Step
+                </button>
+
+                <button
+                  onClick={handleConfirmGeneration}
+                  className="px-8 py-3 rounded-full bg-white text-black text-base font-semibold hover:bg-white/90 transition-colors"
+                >
+                  Start Generation
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          /* Generation/Selection Screen - Show after confirmation */
+          <>
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">
@@ -407,21 +598,28 @@ export default function CharacterValidationScreen() {
 
           {/* Character Variations Grid */}
           <div className="mb-8">
-            <h2 className="text-lg font-semibold text-white mb-4">
-              {hasUploadedImages ? 'Processed Images' : 'Generated Variations'}
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">
+                {hasUploadedImages ? 'Processed Images' : 'Generated Variations'}
+              </h2>
+              {characterImages.length > 0 && (
+                <p className="text-sm text-white/60">
+                  {characterImages.filter(img => img.selected).length} of {characterImages.length} selected
+                </p>
+              )}
+            </div>
 
             {(isGenerating || isProcessingUploads) ? (
               <div className="grid grid-cols-5 gap-4">
-                {/* Single loading placeholder (FUTURE: Change to 10 for multiple variations) */}
-                {[...Array(1)].map((_, i) => (
+                {/* 5 loading placeholders */}
+                {[...Array(5)].map((_, i) => (
                   <div
                     key={i}
                     className="aspect-square bg-white/5 rounded-lg flex flex-col items-center justify-center border border-white/10 p-2"
                   >
                     <Loader2 className="w-6 h-6 text-white/40 animate-spin mb-2" />
                     <span className="text-[10px] text-white/30 text-center">
-                      {i < 1 ? 'Generating' : i < 2 ? 'Processing' : 'Upscaling'}
+                      {i < 5 ? 'Generating' : 'Processing'}
                     </span>
                   </div>
                 ))}
@@ -571,10 +769,12 @@ export default function CharacterValidationScreen() {
             {/* Main Action Button - Right aligned */}
             <button
               onClick={handleConfirm}
-              disabled={!selectedImageId}
+              disabled={characterImages.filter(img => img.selected).length === 0}
               className="px-8 py-3 rounded-full bg-white text-black text-base font-semibold hover:bg-white/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Use This Character
+              {characterImages.filter(img => img.selected).length > 1 
+                ? `Use ${characterImages.filter(img => img.selected).length} Characters` 
+                : 'Use This Character'}
             </button>
           </div>
 
@@ -599,6 +799,8 @@ export default function CharacterValidationScreen() {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );
