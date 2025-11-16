@@ -1,68 +1,75 @@
+/**
+ * API Route: Serve Image
+ * GET /api/serve-image
+ * 
+ * Serves locally stored images by their file path
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs/promises';
+import fs from 'fs';
 import path from 'path';
 
-/**
- * GET /api/serve-image
- * Serves local image files
- * 
- * Query Parameters:
- * - path: string - Local file path to the image
- */
-export const dynamic = 'force-dynamic';
-
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const imagePath = searchParams.get('path');
+    const { searchParams } = new URL(req.url);
+    const filePath = searchParams.get('path');
 
-    if (!imagePath) {
+    if (!filePath) {
       return NextResponse.json(
-        { error: 'path parameter is required' },
+        { error: 'Missing path parameter' },
         { status: 400 }
       );
     }
 
-    // Convert to absolute path
-    let absolutePath = imagePath;
-    if (!path.isAbsolute(imagePath)) {
-      absolutePath = path.join(process.cwd(), imagePath);
+    // Security check: ensure path is within allowed directories
+    const allowedPaths = ['/tmp/projects', path.join(process.cwd(), 'generated')];
+    const isAllowedPath = allowedPaths.some(allowedPath => 
+      filePath.startsWith(allowedPath)
+    );
+
+    if (!isAllowedPath) {
+      return NextResponse.json(
+        { error: 'Access denied' },
+        { status: 403 }
+      );
     }
 
     // Check if file exists
-    try {
-      await fs.access(absolutePath);
-    } catch {
+    if (!fs.existsSync(filePath)) {
       return NextResponse.json(
-        { error: 'Image not found' },
+        { error: 'File not found' },
         { status: 404 }
       );
     }
 
     // Read file
-    const fileBuffer = await fs.readFile(absolutePath);
-    const ext = path.extname(absolutePath).toLowerCase();
+    const fileBuffer = fs.readFileSync(filePath);
     
-    // Determine content type
-    const contentType = 
-      ext === '.png' ? 'image/png' :
-      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
-      ext === '.gif' ? 'image/gif' :
-      ext === '.webp' ? 'image/webp' :
-      'image/png';
+    // Determine content type from file extension
+    const ext = path.extname(filePath).toLowerCase();
+    const contentTypeMap: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.webp': 'image/webp',
+      '.gif': 'image/gif',
+    };
+    const contentType = contentTypeMap[ext] || 'application/octet-stream';
 
+    // Return image
     return new NextResponse(fileBuffer, {
+      status: 200,
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=3600',
+        'Cache-Control': 'public, max-age=31536000',
       },
     });
-  } catch (error: any) {
-    console.error('[API] Error serving image:', error);
+  } catch (error) {
+    console.error('[API:ServeImage] Error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
-      { error: error.message || 'Failed to serve image' },
+      { error: errorMessage },
       { status: 500 }
     );
   }
 }
-

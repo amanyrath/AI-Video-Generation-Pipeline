@@ -9,6 +9,7 @@ import { StartingScreenProps } from '@/lib/types/components';
 import { useProjectStore } from '@/lib/state/project-store';
 import { createProject, uploadImages } from '@/lib/api-client';
 import { Settings, ArrowRight, Image, X } from 'lucide-react';
+import { detectCharactersOrProducts, extractCharacterDescription } from '@/lib/utils/character-detection';
 
 export default function StartingScreen({
   onCreateProject,
@@ -25,7 +26,14 @@ export default function StartingScreen({
   const [isDragging, setIsDragging] = useState(false);
 
   const router = useRouter();
-  const { createProject: createProjectInStore, addChatMessage } = useProjectStore();
+  const { 
+    createProject: createProjectInStore, 
+    addChatMessage,
+    setNeedsCharacterValidation,
+    setHasUploadedImages,
+    setCharacterDescription,
+    setUploadedImageUrls,
+  } = useProjectStore();
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []).filter(file => 
@@ -116,37 +124,57 @@ export default function StartingScreen({
         }
       }
 
-      // Generate storyboard
-      addChatMessage({
-        role: 'agent',
-        content: 'Generating storyboard...',
-        type: 'status',
-      });
-
-      const result = await createProject(finalPrompt, duration || targetDuration, referenceImageUrls);
-
-      if (!result.storyboard.success || !result.storyboard.scenes) {
-        throw new Error(result.storyboard.error || 'Failed to generate storyboard');
-      }
-
-      useProjectStore.getState().setStoryboard(result.storyboard.scenes);
-
-      addChatMessage({
-        role: 'agent',
-        content: `✓ Storyboard generated with ${result.storyboard.scenes.length} scenes`,
-        type: 'status',
-      });
-
-      if (onCreateProject) {
-        await onCreateProject(finalPrompt, allImages.length > 0 ? allImages : undefined, duration || targetDuration);
-      }
-
-      // Navigate to workspace
-      const finalProjectId = useProjectStore.getState().project?.id || projectId;
-      if (finalProjectId) {
-        router.push(`/workspace?projectId=${finalProjectId}`);
+      // Check if character validation is needed BEFORE storyboard generation
+      const hasCharacters = detectCharactersOrProducts(finalPrompt);
+      const hasImages = allImages.length > 0;
+      
+      if (hasCharacters || hasImages) {
+        // Set flags for character validation screen
+        setNeedsCharacterValidation(true);
+        
+        if (hasImages) {
+          setHasUploadedImages(true);
+          setUploadedImageUrls(referenceImageUrls);
+        }
+        
+        if (hasCharacters) {
+          const characterDesc = extractCharacterDescription(finalPrompt);
+          if (characterDesc) {
+            setCharacterDescription(characterDesc);
+          }
+        }
+        
+        // Navigate to character validation screen IMMEDIATELY
+        addChatMessage({
+          role: 'agent',
+          content: 'Validating character while storyboard generates...',
+          type: 'status',
+        });
+        
+        if (onCreateProject) {
+          await onCreateProject(finalPrompt, allImages.length > 0 ? allImages : undefined, duration || targetDuration);
+        }
+        
+        // Navigate to character validation BEFORE storyboard generation
+        router.push('/character-validation');
+        
+        // Generate storyboard in background (non-blocking)
+        generateStoryboardInBackground(finalPrompt, duration || targetDuration, referenceImageUrls);
       } else {
-        router.push('/workspace');
+        // No character validation needed, generate storyboard first
+        await generateStoryboard(finalPrompt, duration || targetDuration, referenceImageUrls);
+        
+        if (onCreateProject) {
+          await onCreateProject(finalPrompt, allImages.length > 0 ? allImages : undefined, duration || targetDuration);
+        }
+
+        // Navigate to workspace
+        const finalProjectId = useProjectStore.getState().project?.id || projectId;
+        if (finalProjectId) {
+          router.push(`/workspace?projectId=${finalProjectId}`);
+        } else {
+          router.push('/workspace');
+        }
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred';
@@ -159,6 +187,45 @@ export default function StartingScreen({
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Helper function to generate storyboard (used for both blocking and non-blocking)
+  const generateStoryboard = async (finalPrompt: string, duration: number, referenceImageUrls: string[]) => {
+    addChatMessage({
+      role: 'agent',
+      content: 'Generating storyboard...',
+      type: 'status',
+    });
+
+    const result = await createProject(finalPrompt, duration, referenceImageUrls);
+
+    if (!result.storyboard.success || !result.storyboard.scenes) {
+      throw new Error(result.storyboard.error || 'Failed to generate storyboard');
+    }
+
+    useProjectStore.getState().setStoryboard(result.storyboard.scenes);
+
+    addChatMessage({
+      role: 'agent',
+      content: `✓ Storyboard generated with ${result.storyboard.scenes.length} scenes`,
+      type: 'status',
+    });
+  };
+
+  // Non-blocking storyboard generation for character validation flow
+  const generateStoryboardInBackground = async (finalPrompt: string, duration: number, referenceImageUrls: string[]) => {
+    try {
+      await generateStoryboard(finalPrompt, duration, referenceImageUrls);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+      console.error('Background storyboard generation failed:', errorMessage);
+      
+      addChatMessage({
+        role: 'agent',
+        content: `Error generating storyboard: ${errorMessage}`,
+        type: 'error',
+      });
     }
   };
 

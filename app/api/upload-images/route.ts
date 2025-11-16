@@ -128,14 +128,14 @@ export async function POST(request: NextRequest) {
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
 
-        // Save image
+        // Save image (upload to S3 for public access)
         const uploadedImage = await saveUploadedImage(
           buffer,
           file.name,
           file.type,
           {
             projectId,
-            useS3: false, // TODO: Enable S3 when ready
+            useS3: true, // Enable S3 for public URLs needed by Replicate
           }
         );
 
@@ -208,7 +208,7 @@ export async function GET() {
     {
       status: 'ok',
       service: 'image-upload',
-      storage: 'local', // TODO: Return 's3' when S3 is enabled
+      storage: 's3',
     },
     { status: 200 }
   );

@@ -1,144 +1,97 @@
 /**
- * Character Detection Utility
+ * Character/Product Detection Utility
  * 
- * Detects mentions of characters or products in text responses
+ * Detects if a prompt mentions characters or products that should be validated
  */
 
 /**
- * Detects if the text mentions characters or products that would benefit from reference images
- * @param text Text to analyze
- * @returns true if character/product mentions are detected
+ * Detects if a prompt mentions characters or products
+ * @param prompt User prompt text
+ * @returns true if characters/products are detected
  */
-export function detectCharacterMention(text: string): boolean {
-  if (!text || typeof text !== 'string') {
-    return false;
-  }
+export function detectCharactersOrProducts(prompt: string): boolean {
+  const lowerPrompt = prompt.toLowerCase();
 
-  const lowerText = text.toLowerCase();
-
-  // Keywords that suggest character or product focus
+  // Character keywords
   const characterKeywords = [
-    // People/Characters
-    'person', 'character', 'protagonist', 'hero', 'driver', 'rider', 'athlete', 'actor',
-    'model', 'woman', 'man', 'boy', 'girl', 'founder', 'ceo', 'employee', 'customer',
-    'user', 'player', 'performer', 'dancer', 'singer', 'musician',
-    
-    // Products/Objects
-    'product', 'car', 'vehicle', 'bike', 'motorcycle', 'bicycle', 'watch', 'phone',
-    'laptop', 'device', 'bottle', 'package', 'box', 'clothing', 'shoes', 'sneakers',
-    'sunglasses', 'bag', 'backpack', 'jewelry', 'ring', 'necklace', 'bracelet',
-    'gadget', 'tool', 'equipment', 'gear', 'accessory',
-    
-    // Branded/specific items
-    'brand', 'logo', 'mascot', 'icon', 'symbol',
+    'character', 'person', 'man', 'woman', 'child', 'kid',
+    'boy', 'girl', 'protagonist', 'hero', 'villain', 'actor',
+    'driver', 'pilot', 'rider', 'athlete', 'model', 'customer',
+    'founder', 'executive', 'worker', 'employee', 'figure',
+    'mascot', 'creature', 'avatar', 'agent', 'user',
   ];
 
-  // Check for keyword mentions
-  const hasKeyword = characterKeywords.some(keyword => {
+  // Product keywords
+  const productKeywords = [
+    'car', 'vehicle', 'automobile', 'truck', 'suv', 'sedan',
+    'product', 'item', 'object', 'device', 'gadget', 'tool',
+    'phone', 'laptop', 'computer', 'watch', 'shoe', 'shoes',
+    'bottle', 'can', 'package', 'box', 'container',
+    'porsche', 'mercedes', 'bmw', 'ferrari', 'tesla', 'ford',
+    'nike', 'adidas', 'apple', 'samsung', 'sony',
+    'motorcycle', 'bike', 'bicycle', 'scooter', 'drone',
+  ];
+
+  const allKeywords = [...characterKeywords, ...productKeywords];
+
+  return allKeywords.some(keyword => {
     // Use word boundaries to avoid false positives
-    const regex = new RegExp(`\\b${keyword}s?\\b`, 'i');
-    return regex.test(lowerText);
+    const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+    return regex.test(lowerPrompt);
+  });
+}
+
+/**
+ * Extracts character/product description from prompt
+ * @param prompt User prompt text
+ * @returns Extracted description or null
+ */
+export function extractCharacterDescription(prompt: string): string | null {
+  const detected = detectCharactersOrProducts(prompt);
+  if (!detected) return null;
+
+  // For now, return the whole prompt
+  // In future, could use NLP to extract just the relevant part
+  return prompt;
+}
+
+/**
+ * Determines if style is cartoon or realistic based on prompt
+ * @param prompt User prompt text
+ * @returns 'cartoon', 'realistic', or 'default'
+ */
+export function detectPromptStyle(prompt: string): 'cartoon' | 'realistic' | 'default' {
+  const lowerPrompt = prompt.toLowerCase();
+
+  // Cartoon keywords
+  const cartoonKeywords = [
+    'cartoon', 'animated', 'animation', 'stylized', 'illustrated',
+    'comic', 'anime', 'cel-shaded', 'toon', '2d', 'hand-drawn',
+    'pixar', 'disney', 'dreamworks', 'studio ghibli',
+  ];
+
+  // Realistic keywords
+  const realisticKeywords = [
+    'realistic', 'photorealistic', 'hyper-realistic', 'real-life',
+    'photograph', 'photo', 'cinematic', 'live-action', '3d render',
+    'hyperrealism', 'lifelike', 'real', 'actual',
+  ];
+
+  const hasCartoon = cartoonKeywords.some(keyword => {
+    const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+    return regex.test(lowerPrompt);
   });
 
-  if (hasKeyword) {
-    return true;
+  const hasRealistic = realisticKeywords.some(keyword => {
+    const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+    return regex.test(lowerPrompt);
+  });
+
+  if (hasCartoon && !hasRealistic) {
+    return 'cartoon';
+  } else if (hasRealistic && !hasCartoon) {
+    return 'realistic';
+  } else {
+    return 'default';
   }
-
-  // Check for possessive forms or descriptive patterns that suggest a specific subject
-  // e.g., "the car's design", "a young driver", "my product"
-  const subjectPatterns = [
-    /\b(the|a|an|our|my|your|their)\s+(specific|unique|custom|branded)\b/i,
-    /\b(focus on|featuring|showcasing|highlighting)\s+(the|a|an)\b/i,
-    /\b(close[-\s]up|hero shot|product shot)\b/i,
-    /\b(consistency|continuity|same)\s+(character|person|product|object)\b/i,
-  ];
-
-  const hasPattern = subjectPatterns.some(pattern => pattern.test(text));
-
-  return hasPattern;
 }
-
-/**
- * Extracts character or product description from text
- * @param text Text to analyze
- * @returns Extracted description or empty string
- */
-export function extractCharacterDescription(text: string): string {
-  if (!text || typeof text !== 'string') {
-    return '';
-  }
-
-  const lowerText = text.toLowerCase();
-  
-  // Simple extraction: look for descriptive patterns
-  // This is a basic implementation - could be enhanced with NLP
-  
-  // Pattern: "The X is..." or "A X that..."
-  const descriptionPatterns = [
-    /(?:the|a|an)\s+([^.,]+?)\s+(?:is|that|which|who)/i,
-    /(?:featuring|showcasing)\s+([^.,]+?)(?:\.|,|$)/i,
-    /(?:focus on|centered on)\s+([^.,]+?)(?:\.|,|$)/i,
-  ];
-
-  for (const pattern of descriptionPatterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-  }
-
-  // If no specific pattern found, return first sentence if it mentions product/character
-  const firstSentence = text.split(/[.!?]/)[0];
-  if (firstSentence && detectCharacterMention(firstSentence)) {
-    return firstSentence.trim();
-  }
-
-  return '';
-}
-
-/**
- * Analyzes wizard responses to determine if character validation is needed
- * @param responses Object containing wizard responses
- * @returns Object with detection results
- */
-export function analyzeWizardResponses(responses: {
-  idea: string;
-  subject: string;
-  style: string;
-  audio: string;
-  platform: string;
-}): {
-  needsValidation: boolean;
-  characterDescription: string;
-  detectedIn: string[];
-} {
-  const detectedIn: string[] = [];
-  let characterDescription = '';
-
-  // Check each response field
-  if (detectCharacterMention(responses.idea)) {
-    detectedIn.push('idea');
-    if (!characterDescription) {
-      characterDescription = extractCharacterDescription(responses.idea);
-    }
-  }
-
-  if (detectCharacterMention(responses.subject)) {
-    detectedIn.push('subject');
-    if (!characterDescription) {
-      characterDescription = extractCharacterDescription(responses.subject);
-    }
-  }
-
-  // Less likely but still check style and audio
-  if (detectCharacterMention(responses.style)) {
-    detectedIn.push('style');
-  }
-
-  return {
-    needsValidation: detectedIn.length > 0,
-    characterDescription: characterDescription || responses.subject, // Fallback to subject
-    detectedIn,
-  };
-}
-

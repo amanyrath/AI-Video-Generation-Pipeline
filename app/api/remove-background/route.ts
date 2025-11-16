@@ -2,21 +2,28 @@
  * API Route: Remove Background
  * POST /api/remove-background
  * 
- * Removes background from an image using Replicate's RMBG model
+ * Removes background from images using Replicate's RMBG model
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { removeBackground, removeBackgrounds } from '@/lib/services/background-remover';
+import { v4 as uuidv4 } from 'uuid';
 
 interface RemoveBackgroundRequest {
   imageUrl?: string;
   imageUrls?: string[];
+  projectId?: string;
+}
+
+interface ProcessedImage {
+  id: string;
+  url: string;
 }
 
 interface RemoveBackgroundResponse {
   success: boolean;
-  imageUrl?: string;
-  imageUrls?: string[];
+  processedImage?: ProcessedImage;
+  processedImages?: ProcessedImage[];
   error?: string;
 }
 
@@ -25,51 +32,27 @@ export async function POST(req: NextRequest): Promise<NextResponse<RemoveBackgro
     const body: RemoveBackgroundRequest = await req.json();
 
     // Validate request
-    if (!body.imageUrl && !body.imageUrls) {
+    if (!body.imageUrls || !Array.isArray(body.imageUrls) || body.imageUrls.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Either imageUrl or imageUrls is required',
+          error: 'imageUrls array is required and must not be empty',
         },
         { status: 400 }
       );
     }
 
-    // Process single image
-    if (body.imageUrl) {
-      const processedUrl = await removeBackground(body.imageUrl);
-      return NextResponse.json({
-        success: true,
-        imageUrl: processedUrl,
-      });
-    }
-
     // Process multiple images
-    if (body.imageUrls && Array.isArray(body.imageUrls)) {
-      if (body.imageUrls.length === 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'imageUrls array cannot be empty',
-          },
-          { status: 400 }
-        );
-      }
+    const processedUrls = await removeBackgrounds(body.imageUrls);
+    const processedImages: ProcessedImage[] = processedUrls.map(url => ({
+      id: uuidv4(),
+      url,
+    }));
 
-      const processedUrls = await removeBackgrounds(body.imageUrls);
-      return NextResponse.json({
-        success: true,
-        imageUrls: processedUrls,
-      });
-    }
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: 'Invalid request format',
-      },
-      { status: 400 }
-    );
+    return NextResponse.json({
+      success: true,
+      processedImages,
+    });
   } catch (error) {
     console.error('[API:RemoveBackground] Error:', error);
 

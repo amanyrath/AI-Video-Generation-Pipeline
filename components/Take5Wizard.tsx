@@ -24,8 +24,8 @@ export default function Take5Wizard({
 }: Take5WizardProps) {
   const [activeStep, setActiveStep] = useState<StepId>(currentStep as StepId);
 
-  const [idea, setIdea] = useState(initialPrompt);
-  const [subject, setSubject] = useState('');
+  const [idea, setIdea] = useState('');
+  const [subject, setSubject] = useState(initialPrompt); // Pre-fill with initial prompt
   const [style, setStyle] = useState('Leigh Powis–style commercial film, tight and action-driven');
   const [audio, setAudio] = useState('');
   const [platform, setPlatform] = useState('');
@@ -34,8 +34,8 @@ export default function Take5Wizard({
   const [images, setImages] = useState<File[]>(initialImages);
 
   const steps: { id: StepId; label: string }[] = [
-    { id: 1, label: 'Idea' },
-    { id: 2, label: 'Subject' },
+    { id: 1, label: 'Subject' },
+    { id: 2, label: 'Idea' },
     { id: 3, label: 'Style' },
     { id: 4, label: 'Sound' },
     { id: 5, label: 'Format' },
@@ -120,10 +120,53 @@ export default function Take5Wizard({
         return (
           <div className="space-y-6">
             <div className="space-y-2">
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-50">
-                Step 1 · What&apos;s the core idea?
+              <h2 className="text-xl font-semibold text-white">
+                Step 1 · What&apos;s the main subject?
               </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
+              <p className="text-sm text-white/60">
+                Describe the main character, product, or object in detail. This will be used to create consistent visuals throughout your video.
+              </p>
+            </div>
+
+            <textarea
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              rows={4}
+              className="w-full rounded-lg border border-white/20 bg-white/[0.02] px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/[0.05] backdrop-blur-sm transition-all resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+              placeholder="E.g., A sleek silver Porsche 911 GT3, studio lighting, pristine condition, sporty and aggressive design, or a young professional in their 30s wearing a modern suit, confident expression..."
+              disabled={disabled}
+            />
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-white/40">Quick examples</p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  'A red sports car with chrome accents, low angle shot',
+                  'A professional woman in business attire, confident and approachable',
+                  'A premium smartphone with sleek design, modern and minimalist',
+                ].map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    onClick={() => setSubject(example)}
+                    disabled={disabled}
+                    className="text-xs rounded-full border border-white/20 px-3 py-1 text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      case 2:
+        return (
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <h2 className="text-xl font-semibold text-white">
+                Step 2 · What&apos;s the core idea?
+              </h2>
+              <p className="text-sm text-white/60">
                 Write it messy. Who is this for, what are you selling, and what should viewers feel or do after
                 watching?
               </p>
@@ -133,13 +176,13 @@ export default function Take5Wizard({
               value={idea}
               onChange={(e) => setIdea(e.target.value)}
               rows={4}
-              className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-gray-100"
+              className="w-full rounded-lg border border-white/20 bg-white/[0.02] px-3 py-2 text-sm text-white placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/[0.05] backdrop-blur-sm transition-all resize-none disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="E.g., A high-energy launch film for a new electric sports car that feels cinematic and aspirational, ending on a bold brand line."
               disabled={disabled}
             />
 
             <div className="space-y-2">
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Quick starters</p>
+              <p className="text-xs font-medium text-white/40">Quick starters</p>
               <div className="flex flex-wrap gap-2">
                 {[
                   'Launch film for a new electric car, focused on acceleration and sleek design.',
@@ -151,7 +194,7 @@ export default function Take5Wizard({
                     type="button"
                     onClick={() => setIdea(example)}
                     disabled={disabled}
-                    className="text-xs rounded-full border border-gray-300 dark:border-gray-700 px-3 py-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                    className="text-xs rounded-full border border-white/20 px-3 py-1 text-white/70 hover:bg-white/10 hover:text-white transition-colors"
                   >
                     {example}
                   </button>
@@ -160,61 +203,8 @@ export default function Take5Wizard({
             </div>
 
             <div className="space-y-3">
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Optional · Reference images</p>
+              <p className="text-xs font-medium text-white/40">Optional · Reference images</p>
               <ImageDropZone onFilesSelected={handleImagesSelected} />
-            </div>
-          </div>
-        );
-      case 2:
-        return (
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-50">
-                Step 2 · Who or what is the hero?
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Tighten the subject so the storyboard never feels generic. Think about the most important thing we need
-                to see on screen.
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Pick one</p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  'The car itself (exterior + motion)',
-                  'Driver and in-car experience',
-                  'The product in close-up hero shots',
-                  'A specific place or journey (road, city, landscape)',
-                  'Brand / founder presence woven into the story',
-                ].map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setSubject(option)}
-                    disabled={disabled}
-                    className={`text-xs rounded-full px-3 py-1 border transition-colors ${
-                      subject === option
-                        ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-50 dark:bg-gray-50 dark:text-gray-900'
-                        : 'border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
-                    }`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Or write your own</p>
-              <input
-                type="text"
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder="E.g., A young driver discovering the car’s performance on an empty coastal road."
-                disabled={disabled}
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-gray-100"
-              />
             </div>
           </div>
         );

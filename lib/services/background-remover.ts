@@ -36,12 +36,17 @@ function createReplicateClient(): Replicate {
 
 /**
  * Removes background from an image URL
- * @param imageUrl URL of the image to process (can be HTTP/HTTPS URL or base64 data URI)
+ * @param imageUrl URL of the image to process (must be publicly accessible HTTP/HTTPS URL)
  * @returns URL of the processed image with background removed
  */
 export async function removeBackground(imageUrl: string): Promise<string> {
   if (!imageUrl || typeof imageUrl !== 'string') {
     throw new Error('Image URL is required and must be a string');
+  }
+
+  // Validate URL format - Replicate requires HTTP/HTTPS URLs
+  if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+    throw new Error(`Image URL must be a public HTTP/HTTPS URL. Received: ${imageUrl.substring(0, 100)}`);
   }
 
   const logPrefix = '[BackgroundRemover]';
