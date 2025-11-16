@@ -9,6 +9,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
+// Force dynamic rendering since we use request.url
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(req.url);
