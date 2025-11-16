@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProjectStore } from '@/lib/state/project-store';
 import { X, RefreshCw, Check, Loader2, Upload } from 'lucide-react';
@@ -38,6 +38,7 @@ export default function CharacterValidationScreen() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isProcessingUploads, setIsProcessingUploads] = useState(false);
   const [additionalImages, setAdditionalImages] = useState<File[]>([]);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<FeedbackState>({
     styleValue: 50,
     detailedValue: 50,
@@ -49,24 +50,16 @@ export default function CharacterValidationScreen() {
   const [editingDescription, setEditingDescription] = useState(false);
   const [tempDescription, setTempDescription] = useState(project?.characterDescription || '');
 
-  // Initialize on mount - either process uploaded images or generate variations
-  useEffect(() => {
-    if (hasUploadedImages && project?.uploadedImageUrls && project.uploadedImageUrls.length > 0) {
-      // Process uploaded images - remove background
-      processUploadedImages();
-    } else if (project?.characterDescription) {
-      // Generate character variations
-      generateCharacterVariations();
-    } else {
-      // No validation needed
-      router.push(`/workspace?projectId=${project?.id}`);
-    }
-  }, []);
+  const handleSkip = useCallback(() => {
+    // Skip character validation and go directly to workspace
+    router.push(`/workspace?projectId=${project?.id}`);
+  }, [router, project?.id]);
 
-  const processUploadedImages = async () => {
+  const processUploadedImages = useCallback(async () => {
     if (!project?.uploadedImageUrls) return;
 
     setIsProcessingUploads(true);
+    setGenerationError(null);
 
     try {
       // Remove background from uploaded images
@@ -95,128 +88,173 @@ export default function CharacterValidationScreen() {
           setSelectedImageId(data.processedImages[0].id);
         }
       } else {
-        console.error('Failed to process uploaded images:', data.error);
+        throw new Error(data.error || 'Failed to process uploaded images');
       }
     } catch (error) {
       console.error('Error processing uploaded images:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setGenerationError(`Failed to process images: ${errorMessage}`);
+      
+      // Use original uploaded images as fallback
+      if (project?.uploadedImageUrls) {
+        setCharacterImages(
+          project.uploadedImageUrls.map((url, index) => ({
+            id: `uploaded-${index}`,
+            url,
+            selected: index === 0,
+            isUploaded: true,
+          }))
+        );
+        if (project.uploadedImageUrls.length > 0) {
+          setSelectedImageId('uploaded-0');
+        }
+      }
     } finally {
       setIsProcessingUploads(false);
     }
-  };
+  }, [project?.uploadedImageUrls, project?.id]);
 
-  const generateCharacterVariations = async () => {
+  const generateCharacterVariations = useCallback(async () => {
     if (!project?.characterDescription) return;
 
     setIsGenerating(true);
+    setGenerationError(null);
 
     try {
       // Build style-aware prompt based on feedback
       const stylePrompt = buildStylePrompt(project.characterDescription, feedback);
 
-      // Call API to generate 10 variations (turnaround + scales)
+      // Generate single character image (simplified for faster processing)
+      // FUTURE: Increase count to 10 for multiple turnaround variations
       const response = await fetch('/api/generate-character-variations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: stylePrompt,
           projectId: project.id,
-          count: 10, // Increased from 5 to 10 for turnaround coverage
-          generateTurnaround: true, // New flag for turnaround generation
+          count: 1, // Generate single image for speed (change to 10 for multiple variations)
+          // generateTurnaround: true, // FUTURE: Enable for turnaround generation
         }),
       });
 
       const data = await response.json();
 
-      if (data.success && data.images) {
-        // Extract URLs from generated images
-        const generatedUrls = data.images.map((img: any) => img.url);
+      if (!data.success || !data.images) {
+        throw new Error(data.error || 'Failed to generate character variations');
+      }
+
+      // Extract URLs from generated images
+      const generatedUrls = data.images.map((img: any) => img.url);
+      
+      // Step 1: Remove backgrounds from all generated images
+      const bgRemovalResponse = await fetch('/api/remove-background', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrls: generatedUrls,
+          projectId: project.id,
+        }),
+      });
+
+      const bgRemovalData = await bgRemovalResponse.json();
+
+      if (bgRemovalData.success && bgRemovalData.processedImages) {
+        const processedUrls = bgRemovalData.processedImages.map((img: { url: string }) => img.url);
         
-        // Step 1: Remove backgrounds from all generated images
-        const bgRemovalResponse = await fetch('/api/remove-background', {
+        // Step 2: Upscale all processed images 4x for high quality
+        console.log('[CharacterValidation] Upscaling images for high quality assets...');
+        const upscaleResponse = await fetch('/api/upscale-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            imageUrls: generatedUrls,
+            imageUrls: processedUrls,
             projectId: project.id,
           }),
         });
 
-        const bgRemovalData = await bgRemovalResponse.json();
+        const upscaleData = await upscaleResponse.json();
 
-        if (bgRemovalData.success && bgRemovalData.processedImages) {
-          const processedUrls = bgRemovalData.processedImages.map((img: { url: string }) => img.url);
-          
-          // Step 2: Upscale all processed images 4x for high quality
-          console.log('[CharacterValidation] Upscaling images for high quality assets...');
-          const upscaleResponse = await fetch('/api/upscale-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              imageUrls: processedUrls,
-              projectId: project.id,
-            }),
-          });
-
-          const upscaleData = await upscaleResponse.json();
-
-          if (upscaleData.success && upscaleData.upscaledImages) {
-            // Map with metadata from original generation
-            setCharacterImages(
-              upscaleData.upscaledImages.map((img: { id: string; url: string }, index: number) => {
-                const originalMetadata = data.images[index];
-                return {
-                  id: img.id,
-                  url: img.url,
-                  selected: false,
-                  isUploaded: false,
-                  type: originalMetadata?.type || 'turnaround',
-                  angle: originalMetadata?.angle || 0,
-                  scale: originalMetadata?.scale || 'full',
-                };
-              })
-            );
-          } else {
-            // Fallback to non-upscaled images
-            console.warn('[CharacterValidation] Upscaling failed, using non-upscaled images');
-            setCharacterImages(
-              bgRemovalData.processedImages.map((img: { id: string; url: string }, index: number) => {
-                const originalMetadata = data.images[index];
-                return {
-                  id: img.id,
-                  url: img.url,
-                  selected: false,
-                  isUploaded: false,
-                  type: originalMetadata?.type || 'turnaround',
-                  angle: originalMetadata?.angle || 0,
-                  scale: originalMetadata?.scale || 'full',
-                };
-              })
-            );
+        if (upscaleData.success && upscaleData.upscaledImages) {
+          // Map with metadata from original generation
+          setCharacterImages(
+            upscaleData.upscaledImages.map((img: { id: string; url: string }, index: number) => {
+              const originalMetadata = data.images[index];
+              return {
+                id: img.id,
+                url: img.url,
+                selected: index === 0, // Auto-select first (and only) image
+                isUploaded: false,
+                type: originalMetadata?.type || 'turnaround',
+                angle: originalMetadata?.angle || 0,
+                scale: originalMetadata?.scale || 'full',
+              };
+            })
+          );
+          // Auto-select the generated image
+          if (upscaleData.upscaledImages.length > 0) {
+            setSelectedImageId(upscaleData.upscaledImages[0].id);
           }
         } else {
-          // Fallback: use original generated images without background removal
-          console.error('Failed to remove backgrounds, using original images');
+          // Fallback to non-upscaled images
+          console.warn('[CharacterValidation] Upscaling failed, using non-upscaled images');
           setCharacterImages(
-            data.images.map((img: any) => ({
-              id: img.id,
-              url: img.url,
-              selected: false,
-              isUploaded: false,
-              type: img.type || 'turnaround',
-              angle: img.angle || 0,
-              scale: img.scale || 'full',
-            }))
+            bgRemovalData.processedImages.map((img: { id: string; url: string }, index: number) => {
+              const originalMetadata = data.images[index];
+              return {
+                id: img.id,
+                url: img.url,
+                selected: index === 0, // Auto-select first image
+                isUploaded: false,
+                type: originalMetadata?.type || 'turnaround',
+                angle: originalMetadata?.angle || 0,
+                scale: originalMetadata?.scale || 'full',
+              };
+            })
           );
+          if (bgRemovalData.processedImages.length > 0) {
+            setSelectedImageId(bgRemovalData.processedImages[0].id);
+          }
         }
       } else {
-        console.error('Failed to generate character variations:', data.error);
+        // Fallback: use original generated images without background removal
+        console.warn('[CharacterValidation] Background removal failed, using original images');
+        setCharacterImages(
+          data.images.map((img: any, index: number) => ({
+            id: img.id,
+            url: img.url,
+            selected: index === 0, // Auto-select first image
+            isUploaded: false,
+            type: img.type || 'turnaround',
+            angle: img.angle || 0,
+            scale: img.scale || 'full',
+          }))
+        );
+        if (data.images.length > 0) {
+          setSelectedImageId(data.images[0].id);
+        }
       }
     } catch (error) {
       console.error('Error generating character variations:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setGenerationError(`Failed to generate characters: ${errorMessage}`);
     } finally {
       setIsGenerating(false);
     }
-  };
+  }, [project?.characterDescription, project?.id, feedback]);
+
+  // Initialize on mount - either process uploaded images or generate variations
+  useEffect(() => {
+    if (hasUploadedImages && project?.uploadedImageUrls && project.uploadedImageUrls.length > 0) {
+      // Process uploaded images - remove background
+      processUploadedImages();
+    } else if (project?.characterDescription) {
+      // Generate character variations
+      generateCharacterVariations();
+    } else {
+      // No validation needed
+      handleSkip();
+    }
+  }, [hasUploadedImages, project?.uploadedImageUrls, project?.characterDescription, project?.id, processUploadedImages, generateCharacterVariations, handleSkip]);
 
   const buildStylePrompt = (description: string, feedback: FeedbackState): string => {
     const parts: string[] = [description];
@@ -375,14 +413,15 @@ export default function CharacterValidationScreen() {
 
             {(isGenerating || isProcessingUploads) ? (
               <div className="grid grid-cols-5 gap-4">
-                {[...Array(10)].map((_, i) => (
+                {/* Single loading placeholder (FUTURE: Change to 10 for multiple variations) */}
+                {[...Array(1)].map((_, i) => (
                   <div
                     key={i}
                     className="aspect-square bg-white/5 rounded-lg flex flex-col items-center justify-center border border-white/10 p-2"
                   >
                     <Loader2 className="w-6 h-6 text-white/40 animate-spin mb-2" />
                     <span className="text-[10px] text-white/30 text-center">
-                      {i < 5 ? 'Generating' : i < 10 ? 'Processing' : 'Upscaling'}
+                      {i < 1 ? 'Generating' : i < 2 ? 'Processing' : 'Upscaling'}
                     </span>
                   </div>
                 ))}
@@ -413,8 +452,19 @@ export default function CharacterValidationScreen() {
                 ))}
               </div>
             ) : (
-              <div className="p-8 text-center text-white/40 border-2 border-dashed border-white/20 rounded-lg">
-                No character variations generated yet
+              <div className="p-8 text-center border-2 border-dashed border-white/20 rounded-lg bg-white/5">
+                <p className="text-white/40 mb-3">No character variations generated yet</p>
+                {generationError && (
+                  <p className="text-sm text-white/30 mb-4">
+                    Generation failed. You can try regenerating or skip this step.
+                  </p>
+                )}
+                <button
+                  onClick={handleSkip}
+                  className="mt-2 px-6 py-2 rounded-full border border-white/20 text-white/70 text-sm hover:bg-white/10 hover:text-white transition-colors"
+                >
+                  Skip to Workspace
+                </button>
               </div>
             )}
           </div>
@@ -508,7 +558,17 @@ export default function CharacterValidationScreen() {
           </div>
 
           {/* Action Button - No Skip */}
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-between">
+            {/* Skip Button - Left aligned */}
+            <button
+              onClick={handleSkip}
+              disabled={isGenerating || isProcessingUploads}
+              className="px-6 py-3 rounded-full border border-white/20 text-white text-base font-medium hover:bg-white/10 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Skip This Step
+            </button>
+
+            {/* Main Action Button - Right aligned */}
             <button
               onClick={handleConfirm}
               disabled={!selectedImageId}
@@ -517,6 +577,27 @@ export default function CharacterValidationScreen() {
               Use This Character
             </button>
           </div>
+
+          {/* Error Display */}
+          {generationError && (
+            <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-lg backdrop-blur-sm animate-shake">
+              <div className="flex items-start gap-3">
+                <div className="flex-1">
+                  <p className="text-sm text-red-400 font-medium">Generation Error</p>
+                  <p className="text-sm text-red-300 mt-1">{generationError}</p>
+                </div>
+                <button
+                  onClick={() => setGenerationError(null)}
+                  className="text-red-400 hover:text-red-300 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-xs text-red-300/70 mt-2">
+                You can skip this step or try regenerating.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

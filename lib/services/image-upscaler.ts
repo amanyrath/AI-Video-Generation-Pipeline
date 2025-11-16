@@ -6,7 +6,6 @@
  */
 
 import Replicate from 'replicate';
-import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -27,7 +26,7 @@ export async function upscaleImage(imageUrl: string, projectId: string): Promise
 
   try {
     // Run the upscaler model
-    const output = await replicate.run(
+    const output = (await replicate.run(
       "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
       {
         input: {
@@ -36,7 +35,7 @@ export async function upscaleImage(imageUrl: string, projectId: string): Promise
           face_enhance: false, // Set to true for portraits/characters with faces
         }
       }
-    ) as string;
+    )) as unknown as string;
 
     console.log(`${logPrefix} Upscale completed, downloading result...`);
 
@@ -89,7 +88,8 @@ async function downloadUpscaledImage(outputUrl: string, projectId: string): Prom
     throw new Error(`Failed to download upscaled image: ${response.statusText}`);
   }
 
-  const buffer = await response.buffer();
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
   
   // Save to S3 for public access
   const { uploadToS3, getS3Url } = await import('@/lib/storage/s3-uploader');
@@ -106,10 +106,11 @@ async function downloadUpscaledImage(outputUrl: string, projectId: string): Prom
   const tempPath = path.join(tempDir, filename);
   fs.writeFileSync(tempPath, buffer);
   
+  let currentPath = tempPath;
+  
   try {
-    // Upload to S3
+    // Upload to S3 (filename already has "upscaled-" prefix)
     const s3Key = await uploadToS3(tempPath, projectId, {
-      folder: 'characters/upscaled',
       metadata: {
         'content-type': 'image/png',
         'upload-type': 'character-upscaled',
@@ -123,8 +124,8 @@ async function downloadUpscaledImage(outputUrl: string, projectId: string): Prom
     return getS3Url(s3Key);
   } catch (error) {
     // Clean up temp file on error
-    if (fs.existsSync(tempPath)) {
-      fs.unlinkSync(tempPath);
+    if (fs.existsSync(currentPath)) {
+      fs.unlinkSync(currentPath);
     }
     throw error;
   }
@@ -144,7 +145,7 @@ export async function upscaleImageWithFaceEnhancement(
   console.log(`${logPrefix} Starting face-enhanced upscale for: ${imageUrl}`);
 
   try {
-    const output = await replicate.run(
+    const output = (await replicate.run(
       "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
       {
         input: {
@@ -153,7 +154,7 @@ export async function upscaleImageWithFaceEnhancement(
           face_enhance: true, // Enable face enhancement
         }
       }
-    ) as string;
+    )) as unknown as string;
 
     const savedPath = await downloadUpscaledImage(output, projectId);
     console.log(`${logPrefix} Face-enhanced upscale saved: ${savedPath}`);

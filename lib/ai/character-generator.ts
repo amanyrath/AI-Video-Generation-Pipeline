@@ -8,7 +8,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { createImagePredictionWithRetry, pollReplicateStatus } from './image-generator';
 import { uploadToS3, getS3Url } from '../storage/s3-uploader';
-import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
 
@@ -195,7 +194,8 @@ async function downloadAndUploadCharacterImage(imageUrl: string, projectId: stri
     throw new Error(`Failed to download image: ${response.statusText}`);
   }
   
-  const buffer = await response.buffer();
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
   
   // Generate unique ID and filename
   const imageId = uuidv4();
@@ -210,11 +210,18 @@ async function downloadAndUploadCharacterImage(imageUrl: string, projectId: stri
   const tempPath = path.join(tempDir, filename);
   fs.writeFileSync(tempPath, buffer);
   
+  // Prefix filename with "characters-" to organize in S3
+  const s3Filename = `characters-${filename}`;
+  const s3Path = path.join(tempDir, s3Filename);
+  let currentPath = tempPath;
+  
   try {
     // Upload to S3
     console.log(`${logPrefix} Uploading to S3`);
-    const s3Key = await uploadToS3(tempPath, projectId, {
-      folder: 'characters',
+    fs.renameSync(tempPath, s3Path);
+    currentPath = s3Path;
+    
+    const s3Key = await uploadToS3(s3Path, projectId, {
       metadata: {
         'content-type': 'image/png',
         'upload-type': 'character-generation',
@@ -222,7 +229,7 @@ async function downloadAndUploadCharacterImage(imageUrl: string, projectId: stri
     });
     
     // Clean up temp file
-    fs.unlinkSync(tempPath);
+    fs.unlinkSync(s3Path);
     
     // Get S3 URL
     const s3Url = getS3Url(s3Key);
@@ -234,8 +241,8 @@ async function downloadAndUploadCharacterImage(imageUrl: string, projectId: stri
     };
   } catch (error) {
     // Clean up temp file on error
-    if (fs.existsSync(tempPath)) {
-      fs.unlinkSync(tempPath);
+    if (fs.existsSync(currentPath)) {
+      fs.unlinkSync(currentPath);
     }
     throw error;
   }
