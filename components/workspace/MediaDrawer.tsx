@@ -171,24 +171,26 @@ export default function MediaDrawer() {
   }, [scenes]);
 
   const uploadedMedia: MediaItem[] = []; // TODO: Get from project state when available
-  
-  // Character references
+  const finalVideo = project?.finalVideoUrl;
+
+  // Character references from project state
   const characterReferences = useMemo(() => {
     const refs: MediaItem[] = [];
-    if (project?.characterReferences && project.characterReferences.length > 0) {
-      project.characterReferences.forEach((url, index) => {
-        refs.push({
-          id: `char-ref-${index}`,
-          type: 'image' as const,
-          url,
-          metadata: { isCharacterReference: true },
-        });
+    project?.characterReferences?.forEach((url, index) => {
+      // Convert local path to serveable URL if needed
+      let imageUrl = url;
+      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {
+        imageUrl = `/api/serve-image?path=${encodeURIComponent(url)}`;
+      }
+      refs.push({
+        id: `character-ref-${index}`,
+        type: 'image' as const,
+        url: imageUrl,
+        timestamp: new Date().toISOString(),
       });
-    }
+    });
     return refs;
-  }, [project]);
-  
-  const finalVideo = project?.finalVideoUrl;
+  }, [project?.characterReferences]);
 
   // Drag and drop handler
   const handleMediaDrop = (itemId: string, itemType: 'image' | 'video' | 'frame', targetSceneIndex?: number) => {
@@ -406,6 +408,13 @@ export default function MediaDrawer() {
         {item.sceneIndex !== undefined && (
           <div className="absolute top-2 left-2 px-2 py-1 bg-black/60 text-white text-xs rounded">
             Scene {item.sceneIndex + 1}
+          </div>
+        )}
+
+        {/* Iteration Badge (for processed images) */}
+        {item.metadata?.iteration !== undefined && (
+          <div className="absolute top-2 left-2 px-2 py-1 bg-purple-600 text-white text-xs rounded font-semibold">
+            {item.metadata.iteration === 0 ? 'Original' : `Iteration ${item.metadata.iteration}`}
           </div>
         )}
 

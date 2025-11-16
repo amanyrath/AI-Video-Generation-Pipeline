@@ -9,6 +9,7 @@ import {
   ImageGenerationResponse,
   ImageStatusResponse,
 } from '@/lib/types';
+import { UploadedImage } from '@/lib/storage/image-storage';
 import { getRuntimeConfig } from '@/lib/config/model-runtime';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
@@ -177,13 +178,27 @@ export async function createProject(
  */
 export async function uploadImages(
   files: File[],
-  projectId: string
-): Promise<{ urls: string[]; paths: string[]; images?: Array<{ id: string; url: string; localPath: string }> }> {
+  projectId: string,
+  enableBackgroundRemoval?: boolean
+): Promise<{ urls: string[]; paths: string[]; images?: UploadedImage[] }> {
   const formData = new FormData();
   files.forEach((file) => {
     formData.append('images', file);
   });
   formData.append('projectId', projectId);
+  
+  // Get background removal setting from runtime config if not provided
+  if (enableBackgroundRemoval === undefined) {
+    try {
+      const { getRuntimeConfig } = await import('@/lib/config/model-runtime');
+      const config = getRuntimeConfig();
+      enableBackgroundRemoval = config.enableBackgroundRemoval !== false;
+    } catch {
+      // Default to true if config can't be loaded
+      enableBackgroundRemoval = true;
+    }
+  }
+  formData.append('enableBackgroundRemoval', enableBackgroundRemoval ? 'true' : 'false');
 
   return retryRequest(async () => {
     const response = await fetch(`${API_BASE_URL}/api/upload-images`, {
@@ -206,6 +221,7 @@ export async function uploadImages(
       ...result,
       urls,
       paths,
+      images: result.images, // Include full image objects with processed versions
     };
   });
 }
@@ -281,7 +297,14 @@ export async function pollImageStatus(
 
         const response = await fetch(url);
         if (!response.ok) {
-          throw new Error('Failed to fetch image status');
+          const errorText = await response.text();
+          let errorData;
+          try {
+            errorData = JSON.parse(errorText);
+          } catch {
+            errorData = { error: errorText || 'Failed to fetch image status' };
+          }
+          throw new Error(errorData.error || `HTTP ${response.status}: Failed to fetch image status`);
         }
 
         const status: ImageStatusResponse = await response.json();

@@ -34,16 +34,46 @@ export const AVAILABLE_TEXT_MODELS: ModelOption[] = [
     description: 'Fast and cost-effective (default)',
   },
   {
+    id: 'openai/gpt-4-turbo',
+    name: 'GPT-4 Turbo',
+    provider: 'OpenAI',
+    description: 'Previous generation flagship model',
+  },
+  {
     id: 'anthropic/claude-3.5-sonnet',
     name: 'Claude 3.5 Sonnet',
     provider: 'Anthropic',
     description: 'Strong reasoning and creative writing',
   },
   {
+    id: 'anthropic/claude-3-opus',
+    name: 'Claude 3 Opus',
+    provider: 'Anthropic',
+    description: 'Most capable Claude model',
+  },
+  {
     id: 'anthropic/claude-3-haiku',
     name: 'Claude 3 Haiku',
     provider: 'Anthropic',
     description: 'Fast and efficient',
+  },
+  {
+    id: 'google/gemini-pro-1.5',
+    name: 'Gemini Pro 1.5',
+    provider: 'Google',
+    description: 'Large context window',
+  },
+  {
+    id: 'meta-llama/llama-3.1-70b-instruct',
+    name: 'Llama 3.1 70B',
+    provider: 'Meta',
+    description: 'Open-source, high performance',
+  },
+  {
+    id: 'mistralai/mistral-large',
+    name: 'Mistral Large',
+    provider: 'Mistral AI',
+    description: 'European AI powerhouse',
   },
 ];
 
@@ -55,7 +85,7 @@ export const AVAILABLE_T2I_MODELS: ModelOption[] = [
     id: 'black-forest-labs/flux-1.1-pro',
     name: 'FLUX 1.1 Pro',
     provider: 'Black Forest Labs',
-    description: 'Highest quality, photorealistic (default)',
+    description: 'Highest quality, photorealistic',
     supportedInputs: ['prompt', 'aspect_ratio', 'output_format', 'output_quality', 'safety_tolerance', 'seed'],
   },
   {
@@ -69,7 +99,7 @@ export const AVAILABLE_T2I_MODELS: ModelOption[] = [
     id: 'black-forest-labs/flux-schnell',
     name: 'FLUX Schnell',
     provider: 'Black Forest Labs',
-    description: 'Fast generation, lower quality',
+    description: 'Fast and reliable (default)',
     supportedInputs: ['prompt', 'aspect_ratio', 'output_format', 'output_quality', 'num_outputs', 'seed'],
   },
   {
@@ -80,24 +110,61 @@ export const AVAILABLE_T2I_MODELS: ModelOption[] = [
     supportedInputs: ['prompt', 'width', 'height', 'num_outputs', 'guidance_scale', 'num_inference_steps', 'seed'],
   },
   {
+    id: 'black-forest-labs/flux-pro',
+    name: 'FLUX Pro',
+    provider: 'Black Forest Labs',
+    description: 'Professional quality generation',
+  },
+  {
     id: 'stability-ai/sdxl',
     name: 'Stable Diffusion XL',
     provider: 'Stability AI',
     description: 'Versatile open-source model',
     supportedInputs: ['prompt', 'negative_prompt', 'width', 'height', 'num_outputs', 'guidance_scale', 'seed'],
   },
+  {
+    id: 'stability-ai/sd3-medium',
+    name: 'Stable Diffusion 3 Medium',
+    provider: 'Stability AI',
+    description: 'Latest SD3 architecture',
+  },
+  {
+    id: 'ideogram-ai/ideogram-v2',
+    name: 'Ideogram V2',
+    provider: 'Ideogram',
+    description: 'Excellent text rendering',
+  },
+  {
+    id: 'recraft-ai/recraft-v3',
+    name: 'Recraft V3',
+    provider: 'Recraft',
+    description: 'High-quality vector-style images',
+  },
 ];
 
 /**
  * Image-to-Image (I2I) Models
  * Note: Currently using T2I models with IP-Adapter for I2I functionality
+ * Runway Gen-4 Image models use reference_images parameter (not IP-Adapter)
  */
 export const AVAILABLE_I2I_MODELS: ModelOption[] = [
+  {
+    id: 'runwayml/gen4-image',
+    name: 'Runway Gen-4 Image',
+    provider: 'Runway',
+    description: 'Maximum consistency with reference images, best for Scene 0',
+  },
+  {
+    id: 'runwayml/gen4-image-turbo',
+    name: 'Runway Gen-4 Image Turbo',
+    provider: 'Runway',
+    description: 'Fast Gen-4 image generation with good consistency',
+  },
   {
     id: 'black-forest-labs/flux-1.1-pro',
     name: 'FLUX 1.1 Pro (IP-Adapter)',
     provider: 'Black Forest Labs',
-    description: 'Best quality with reference images (default)',
+    description: 'Best quality with reference images',
     supportedInputs: ['prompt', 'image', 'ip_adapter_images', 'ip_adapter_scale', 'aspect_ratio', 'output_format', 'seed'],
   },
   {
@@ -118,8 +185,20 @@ export const AVAILABLE_I2I_MODELS: ModelOption[] = [
     id: 'black-forest-labs/flux-dev',
     name: 'FLUX Dev (IP-Adapter)',
     provider: 'Black Forest Labs',
-    description: 'Open-weight with reference support',
+    description: 'Open-weight with reference support (default)',
     supportedInputs: ['prompt', 'image', 'ip_adapter_images', 'ip_adapter_scale', 'aspect_ratio', 'output_format', 'seed'],
+  },
+  {
+    id: 'black-forest-labs/flux-schnell',
+    name: 'FLUX Schnell (IP-Adapter)',
+    provider: 'Black Forest Labs',
+    description: 'Fast reference-based generation',
+  },
+  {
+    id: 'black-forest-labs/flux-pro',
+    name: 'FLUX Pro (IP-Adapter)',
+    provider: 'Black Forest Labs',
+    description: 'Professional quality with references',
   },
   {
     id: 'stability-ai/sdxl',
@@ -127,6 +206,12 @@ export const AVAILABLE_I2I_MODELS: ModelOption[] = [
     provider: 'Stability AI',
     description: 'Versatile image transformation',
     supportedInputs: ['prompt', 'image', 'negative_prompt', 'strength', 'guidance_scale', 'num_outputs', 'seed'],
+  },
+  {
+    id: 'stability-ai/sd3-medium',
+    name: 'SD3 Medium (IP-Adapter)',
+    provider: 'Stability AI',
+    description: 'Latest architecture with references',
   },
 ];
 
@@ -145,8 +230,47 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
     id: 'wan-video/wan-2.5-i2v-fast:5be8b80ffe74f3d3a731693ddd98e7ee94100a0f4ae704bd58e93565977670f9',
     name: 'WAN 2.5 (i2v-fast)',
     provider: 'WAN Video',
-    description: '$0.07/s',
+    description: '$0.07/s improved quality',
     supportedInputs: ['image', 'prompt', 'duration', 'resolution', 'negative_prompt', 'enable_prompt_expansion', 'seed'],
+  },
+  {
+    id: 'minimax/video-01',
+    name: 'MiniMax Video-01',
+    provider: 'MiniMax',
+    description: 'High quality 6s videos',
+  },
+  {
+    id: 'minimax/hailuo-2.3-fast',
+    name: 'Hailuo 2.3 Fast',
+    provider: 'MiniMax',
+    description: '$0.19/video fast generation',
+    supportedInputs: ['image', 'prompt', 'duration'],
+  },
+  {
+    id: 'kwaivgi/kling-v2.5-turbo-proto',
+    name: 'Kling V2.5 Turbo',
+    provider: 'Kuaishou',
+    description: '$0.07/video Chinese AI',
+    supportedInputs: ['image', 'prompt', 'aspect_ratio', 'duration', 'negative_prompt', 'seed'],
+  },
+  {
+    id: 'kwaivgi/kling-v1.5-pro',
+    name: 'Kling V1.5 Pro',
+    provider: 'Kuaishou',
+    description: 'Professional quality 10s videos',
+  },
+  {
+    id: 'luma/ray',
+    name: 'Luma Ray',
+    provider: 'Luma AI',
+    description: 'Cinematic quality $0.45/video',
+    supportedInputs: ['image', 'prompt', 'last_frame', 'aspect_ratio', 'loop'],
+  },
+  {
+    id: 'luma/ray-2',
+    name: 'Luma Ray 2',
+    provider: 'Luma AI',
+    description: 'Next-gen cinematic quality',
   },
   {
     id: 'google/veo-3.1-fast',
@@ -177,25 +301,16 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
     supportedInputs: ['image', 'prompt', 'last_frame', 'aspect_ratio', 'duration', 'seed'],
   },
   {
-    id: 'kwaivgi/kling-v2.5-turbo-proto',
-    name: 'Kling V2.5 Turbo Proto',
-    provider: 'Kuaishou',
-    description: '$0.07/video',
-    supportedInputs: ['image', 'prompt', 'aspect_ratio', 'duration', 'negative_prompt', 'seed'],
+    id: 'runway/gen-3-alpha-turbo',
+    name: 'Runway Gen-3 Alpha Turbo',
+    provider: 'Runway',
+    description: 'Fast creative generation',
   },
   {
-    id: 'minimax/hailuo-2.3-fast',
-    name: 'Hailuo 2.3 Fast',
-    provider: 'MiniMax',
-    description: '$0.19/video',
-    supportedInputs: ['image', 'prompt', 'duration'],
-  },
-  {
-    id: 'luma/ray',
-    name: 'Luma Ray',
-    provider: 'Luma AI',
-    description: 'Cinematic quality $0.45/video',
-    supportedInputs: ['image', 'prompt', 'last_frame', 'aspect_ratio', 'loop'],
+    id: 'stability-ai/stable-video-diffusion',
+    name: 'Stable Video Diffusion',
+    provider: 'Stability AI',
+    description: 'Open-source video generation',
   },
 ];
 
@@ -205,7 +320,9 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
 
 export const IMAGE_CONFIG = {
   // Model identifier for Replicate
-  model: process.env.REPLICATE_IMAGE_MODEL || 'black-forest-labs/flux-1.1-pro',
+  // Note: FLUX models on Replicate require the full version hash
+  // flux-schnell is the fastest and most reliable for testing
+  model: process.env.REPLICATE_IMAGE_MODEL || 'black-forest-labs/flux-schnell',
   
   // Image generation parameters
   aspectRatio: '16:9' as const,
@@ -259,6 +376,15 @@ function resolveVideoModel(envModel?: string): string {
     return 'luma/ray';
   }
 
+  // Runway Gen-4 aliases
+  if (normalized === 'gen4' || normalized === 'gen4-aleph' || normalized === 'runway-gen4') {
+    return 'runwayml/gen4-aleph';
+  }
+
+  if (normalized === 'gen4-turbo' || normalized === 'runway-gen4-turbo') {
+    return 'runwayml/gen4-turbo';
+  }
+
   // Return as-is if it's already a full identifier
   return envModel;
 }
@@ -301,6 +427,9 @@ export const MODEL_INFO = {
 } as const;
 
 function getVideoModelName(model: string): string {
+  if (model.includes('gen4-aleph')) return 'Runway Gen-4 Aleph';
+  if (model.includes('gen4-turbo')) return 'Runway Gen-4 Turbo';
+  if (model.includes('gen4')) return 'Runway Gen-4';
   if (model.includes('wan-2.5')) return 'WAN 2.5 (i2v-fast)';
   if (model.includes('wan-2.2')) return 'WAN 2.2 (i2v-fast)';
   if (model.includes('veo-3.1-fast')) return 'Google Veo 3.1 Fast';
@@ -325,7 +454,7 @@ function getVideoModelName(model: string): string {
  *
  * Video Generation:
  * - REPLICATE_VIDEO_MODEL: Model identifier or alias (default: wan2.2)
- *   Aliases: wan2.5, wan2.2, veo, veo-fast, luma, ray
+ *   Aliases: wan2.5, wan2.2, veo, veo-fast, luma, ray, gen4, gen4-turbo
  * - VIDEO_DURATION: Duration in seconds (default: 5, supports 5 or 10 for WAN)
  * - VIDEO_RESOLUTION: Resolution (default: 720p, supports 720p, 1080p, 4K)
  *

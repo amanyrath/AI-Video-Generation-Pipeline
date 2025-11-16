@@ -21,6 +21,7 @@ export interface RuntimeModelConfig {
   t2i: string;
   i2i: string;
   video: string;
+  enableBackgroundRemoval?: boolean; // Optional: Enable/disable background removal on upload
 }
 
 const STORAGE_KEY = 'ai-pipeline-runtime-models';
@@ -30,9 +31,10 @@ const STORAGE_KEY = 'ai-pipeline-runtime-models';
  */
 export const DEFAULT_RUNTIME_CONFIG: RuntimeModelConfig = {
   text: AVAILABLE_TEXT_MODELS[1].id, // gpt-4o-mini
-  t2i: AVAILABLE_T2I_MODELS[0].id, // flux-1.1-pro
-  i2i: AVAILABLE_I2I_MODELS[0].id, // flux-1.1-pro with IP-Adapter
-  video: AVAILABLE_VIDEO_MODELS[0].id, // wan-2.5
+  t2i: AVAILABLE_T2I_MODELS[2].id, // flux-schnell (fast and reliable)
+  i2i: AVAILABLE_I2I_MODELS[0].id, // runwayml/gen4-image (best for Scene 0 consistency)
+  video: AVAILABLE_VIDEO_MODELS[0].id, // wan-2.2 (fast and cost-effective)
+  enableBackgroundRemoval: true, // Default: enabled
 };
 
 /**
@@ -49,6 +51,10 @@ export function getRuntimeConfig(): RuntimeModelConfig {
       const parsed = JSON.parse(stored);
       // Validate that all required fields exist
       if (parsed.text && parsed.t2i && parsed.i2i && parsed.video) {
+        // Ensure enableBackgroundRemoval has a default if not present
+        if (parsed.enableBackgroundRemoval === undefined) {
+          parsed.enableBackgroundRemoval = DEFAULT_RUNTIME_CONFIG.enableBackgroundRemoval;
+        }
         return parsed;
       }
     }

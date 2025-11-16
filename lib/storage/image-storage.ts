@@ -21,6 +21,17 @@ export interface UploadedImage {
   size: number;
   mimeType: string;
   createdAt: string;
+  processedVersions?: ProcessedImage[]; // Background-removed versions
+}
+
+export interface ProcessedImage {
+  id: string;               // Unique ID for this processed version
+  iteration: number;        // Iteration number (1, 2, etc.)
+  url: string;              // Local file path or S3 URL
+  localPath: string;        // Local file path
+  s3Key?: string;           // S3 key if uploaded to S3
+  size: number;
+  createdAt: string;
 }
 
 export interface StorageOptions {

@@ -39,11 +39,19 @@ interface ProjectStore {
   createProject: (prompt: string, targetDuration?: number) => void;
   setStoryboard: (scenes: Scene[]) => void;
   updateScenePrompt: (sceneIndex: number, imagePrompt: string) => void;
+  updateSceneSettings: (sceneIndex: number, settings: {
+    imagePrompt?: string;
+    negativePrompt?: string;
+    customDuration?: number;
+    customImageInput?: string | string[];
+    useSeedFrame?: boolean;
+  }) => void;
   setViewMode: (mode: ViewMode) => void;
   setCurrentSceneIndex: (index: number) => void;
   addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
   updateMediaDrawer: (updates: Partial<MediaDrawerState>) => void;
   updateDragDrop: (updates: Partial<DragDropState>) => void;
+  setUploadedImages: (images: Array<import('../storage/image-storage').UploadedImage>) => void;
   
   // Scene generation actions
   setSceneStatus: (sceneIndex: number, status: SceneWithState['status']) => void;
@@ -182,6 +190,42 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         updatedScenes[sceneIndex] = {
           ...updatedScenes[sceneIndex],
           imagePrompt,
+        };
+      }
+      
+      return {
+        project: {
+          ...state.project,
+          storyboard: updatedStoryboard,
+        },
+        scenes: updatedScenes,
+      };
+    });
+  },
+  
+  updateSceneSettings: (sceneIndex: number, settings: {
+    imagePrompt?: string;
+    negativePrompt?: string;
+    customDuration?: number;
+    customImageInput?: string | string[];
+    useSeedFrame?: boolean;
+  }) => {
+    set((state) => {
+      if (!state.project || !state.project.storyboard[sceneIndex]) return state;
+      
+      // Update the scene in the storyboard
+      const updatedStoryboard = [...state.project.storyboard];
+      updatedStoryboard[sceneIndex] = {
+        ...updatedStoryboard[sceneIndex],
+        ...settings,
+      };
+      
+      // Update the scene in scenes array (SceneWithState)
+      const updatedScenes = [...state.scenes];
+      if (updatedScenes[sceneIndex]) {
+        updatedScenes[sceneIndex] = {
+          ...updatedScenes[sceneIndex],
+          ...settings,
         };
       }
       
@@ -393,6 +437,23 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     set((state) => ({
       dragDrop: { ...state.dragDrop, ...updates },
     }));
+  },
+
+  setUploadedImages: (images) => {
+    set((state) => {
+      if (!state.project) return state;
+      
+      // Extract URLs for backward compatibility
+      const referenceImageUrls = images.map(img => img.url);
+      
+      return {
+        project: {
+          ...state.project,
+          uploadedImages: images,
+          referenceImageUrls, // Keep for backward compatibility
+        },
+      };
+    });
   },
   
   // Generation action helpers (Phase 5.1.1)

@@ -52,8 +52,10 @@ interface ReplicateInput {
   output_format?: string;
   output_quality?: number;
   image?: string; // For image-to-image
-  ip_adapter_images?: string[]; // For IP-Adapter reference images (object consistency)
+  ip_adapter_images?: string[]; // For IP-Adapter reference images (FLUX models)
   ip_adapter_scale?: number; // Control how strongly to follow reference (0-1, default 0.7)
+  reference_images?: string[]; // For Gen-4 Image models (Runway Gen-4 Image)
+  [key: string]: any; // Allow additional model-specific parameters
 }
 
 // ============================================================================
@@ -136,7 +138,10 @@ export async function createImagePrediction(
 
   const replicate = createReplicateClient();
 
-  // Build input parameters for flux-dev
+  // Detect if we're using Gen-4 Image models (they use reference_images instead of ip_adapter_images)
+  const isGen4Image = REPLICATE_MODEL.includes('gen4-image');
+
+  // Build input parameters
   const input: ReplicateInput = {
     prompt: prompt.trim(),
     num_outputs: 1,
@@ -150,11 +155,18 @@ export async function createImagePrediction(
     input.image = seedImage;
   }
 
-  // Add IP-Adapter reference images for object consistency
+  // Add reference images - Gen-4 Image uses reference_images, FLUX uses ip_adapter_images
   if (referenceImageUrls && referenceImageUrls.length > 0) {
-    input.ip_adapter_images = referenceImageUrls;
-    input.ip_adapter_scale = ipAdapterScale ?? DEFAULT_IP_ADAPTER_SCALE;
-    console.log(`${logPrefix} Using IP-Adapter with ${referenceImageUrls.length} reference image(s) for object consistency`);
+    if (isGen4Image) {
+      // Gen-4 Image models use reference_images parameter
+      input.reference_images = referenceImageUrls;
+      console.log(`${logPrefix} Using Gen-4 Image reference_images with ${referenceImageUrls.length} reference image(s) for object consistency`);
+    } else {
+      // FLUX models use IP-Adapter
+      input.ip_adapter_images = referenceImageUrls;
+      input.ip_adapter_scale = ipAdapterScale ?? DEFAULT_IP_ADAPTER_SCALE;
+      console.log(`${logPrefix} Using IP-Adapter with ${referenceImageUrls.length} reference image(s) for object consistency`);
+    }
   }
 
   try {

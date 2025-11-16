@@ -668,10 +668,17 @@ export default function LeftPanel({ onCollapse }: LeftPanelProps) {
           content: `Uploading ${images.length} image(s)...`,
           type: 'status',
         });
-        await uploadImages(images, project.id);
+        const uploadResult = await uploadImages(images, project.id);
+        
+        // Store full uploaded image objects in project state
+        if (uploadResult.images) {
+          const { setUploadedImages } = useProjectStore.getState();
+          setUploadedImages(uploadResult.images);
+        }
+        
         addChatMessage({
           role: 'agent',
-          content: `✓ ${images.length} image(s) uploaded successfully`,
+          content: `✓ ${images.length} image(s) uploaded successfully (with ${uploadResult.images?.reduce((sum, img) => sum + (img.processedVersions?.length || 0), 0) || 0} processed versions)`,
           type: 'status',
         });
       } catch (err) {
@@ -692,7 +699,7 @@ export default function LeftPanel({ onCollapse }: LeftPanelProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-800">
+    <div className="flex flex-col h-full w-full bg-white dark:bg-gray-800">
       {/* Panel Header - Cursor style: minimal */}
       <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <h2 className="text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">

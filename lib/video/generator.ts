@@ -53,8 +53,10 @@ interface ReplicateInput {
   duration?: number; // Optional: Duration of the generated video in seconds
   resolution?: string; // Optional: Video resolution (e.g., '720p')
   negative_prompt?: string; // Optional: Text to specify elements to avoid
-  enable_prompt_expansion?: boolean; // Optional: Enable prompt optimization
+  enable_prompt_expansion?: boolean; // Optional: Enable prompt optimization (WAN models)
   seed?: number; // Optional: Random seed for reproducible generation
+  reference_images?: string[]; // Optional: Reference images for Gen-4 (for character/object consistency)
+  [key: string]: any; // Allow additional model-specific parameters
 }
 
 // ============================================================================
@@ -80,6 +82,36 @@ function createReplicateClient(): Replicate {
   return new Replicate({
     auth: apiToken,
   });
+}
+
+// ============================================================================
+// Duration Validation
+// ============================================================================
+
+/**
+ * Validates and adjusts duration based on model requirements
+ * @param duration Requested duration in seconds
+ * @param model Model identifier
+ * @returns Valid duration for the model
+ */
+function validateAndAdjustDuration(duration: number, model: string): number {
+  // Google Veo 3.1 Fast only accepts 4, 6, or 8 seconds
+  if (model.includes('veo-3.1-fast') || model.includes('google/veo-3.1-fast')) {
+    const validDurations = [4, 6, 8];
+    // Find the closest valid duration
+    const adjusted = validDurations.reduce((prev, curr) => 
+      Math.abs(curr - duration) < Math.abs(prev - duration) ? curr : prev
+    );
+    if (adjusted !== duration) {
+      console.log(`[VideoGenerator] Adjusted duration from ${duration}s to ${adjusted}s for ${model}`);
+    }
+    return adjusted;
+  }
+
+  // Google Veo 3.1 (non-fast) may have different requirements
+  // Add other model-specific validations here as needed
+  
+  return duration;
 }
 
 // ============================================================================
@@ -122,8 +154,10 @@ export async function createVideoPrediction(
   } else {
     console.log(`${logPrefix}   - Mode: image-to-video (Scene 0)`);
   }
+  // Validate and adjust duration based on model requirements
+  const validatedDuration = validateAndAdjustDuration(VIDEO_DURATION, REPLICATE_MODEL);
   console.log(`${logPrefix} Settings:`);
-  console.log(`${logPrefix}   - Duration: ${VIDEO_DURATION}s`);
+  console.log(`${logPrefix}   - Duration: ${validatedDuration}s${validatedDuration !== VIDEO_DURATION ? ` (adjusted from ${VIDEO_DURATION}s)` : ''}`);
   console.log(`${logPrefix}   - Resolution: ${VIDEO_RESOLUTION}`);
 
   const replicate = createReplicateClient();
@@ -133,12 +167,27 @@ export async function createVideoPrediction(
   // For Scene 1-4: use seedFrame if provided, otherwise use imageUrl
   const inputImageUrl = seedFrame || imageUrl;
 
+  // Model-specific parameter handling
+  // Gen-4 models may have different parameter names/requirements than WAN models
+  const isGen4 = REPLICATE_MODEL.includes('gen4');
+  
   const input: ReplicateInput = {
-    image: inputImageUrl, // wan-video uses 'image' parameter instead of 'start_image_url'
+    image: inputImageUrl,
     prompt: prompt.trim(),
-    duration: VIDEO_DURATION,
-    resolution: VIDEO_RESOLUTION, // wan-video uses 'resolution' instead of 'aspect_ratio'
-    enable_prompt_expansion: true, // Enable prompt optimization for better results
+    // WAN models use 'duration' and 'resolution'
+    // Gen-4 models may use different parameters - adjust if needed
+    ...(isGen4 ? {
+      // Gen-4 specific parameters (adjust based on actual API requirements)
+      // Note: Gen-4 may use 'duration' and 'resolution' or different names
+      // If Gen-4 has different requirements, update here
+      duration: validatedDuration,
+      resolution: VIDEO_RESOLUTION,
+    } : {
+      // WAN model parameters
+      duration: validatedDuration,
+      resolution: VIDEO_RESOLUTION,
+      enable_prompt_expansion: true, // WAN-specific: Enable prompt optimization
+    }),
   };
 
   try {
