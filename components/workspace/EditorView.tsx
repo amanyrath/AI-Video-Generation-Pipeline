@@ -1044,12 +1044,13 @@ export default function EditorView() {
                         />
                       </div>
 
-                      {/* Duration (Optional) */}
-                      <div>
-                        <label className="block text-xs font-medium text-white mb-1">
-                          Duration <span className="text-white/60 text-xs">(optional, up to 10 seconds)</span>
-                        </label>
-                        <div className="flex items-center gap-4">
+                      {/* Duration and Use Seed Frame - Side by Side */}
+                      <div className="flex items-start gap-8">
+                        {/* Duration (Optional) */}
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-white mb-1">
+                            Duration <span className="text-white/60 text-xs">(optional, up to 10 seconds)</span>
+                          </label>
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
@@ -1066,19 +1067,24 @@ export default function EditorView() {
                             />
                             <span className="text-xs text-white/60">seconds</span>
                           </div>
+                        </div>
+                        
+                        {/* Use Seed Frame Toggle */}
+                        {currentSceneIndex > 0 && (() => {
+                          const previousScene = scenes[currentSceneIndex - 1];
+                          const selectedSeedFrameIndex = previousScene?.selectedSeedFrameIndex ?? 0;
+                          const seedFrame = previousScene?.seedFrames?.[selectedSeedFrameIndex];
+                          const seedFrameUrl = seedFrame?.url 
+                            ? (seedFrame.url.startsWith('http://') || seedFrame.url.startsWith('https://') || seedFrame.url.startsWith('/api')
+                                ? seedFrame.url
+                                : `/api/serve-image?path=${encodeURIComponent(seedFrame.localPath || seedFrame.url)}`)
+                            : null;
                           
-                          {/* Use Seed Frame Toggle */}
-                          {currentSceneIndex > 0 && (() => {
-                            const previousScene = scenes[currentSceneIndex - 1];
-                            const selectedSeedFrameIndex = previousScene?.selectedSeedFrameIndex ?? 0;
-                            const seedFrame = previousScene?.seedFrames?.[selectedSeedFrameIndex];
-                            const seedFrameUrl = seedFrame?.url 
-                              ? (seedFrame.url.startsWith('http://') || seedFrame.url.startsWith('https://') || seedFrame.url.startsWith('/api')
-                                  ? seedFrame.url
-                                  : `/api/serve-image?path=${encodeURIComponent(seedFrame.localPath || seedFrame.url)}`)
-                              : null;
-                            
-                            return (
+                          return (
+                            <div className="flex-1">
+                              <label className="block text-xs font-medium text-white mb-1">
+                                Use seed frame
+                              </label>
                               <div className="flex items-center gap-2">
                                 <label className="flex items-center gap-2 cursor-pointer">
                                   <input
@@ -1105,9 +1111,9 @@ export default function EditorView() {
                                   </div>
                                 )}
                               </div>
-                            );
-                          })()}
-                        </div>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Image Input (Optional) */}
@@ -1209,7 +1215,7 @@ export default function EditorView() {
 
       {/* Main Preview Area */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {!sceneHasImage && !sceneHasVideo && (
+        {!sceneHasImage && !sceneHasVideo && !isGeneratingImage && (
           <div className="flex flex-col items-center justify-center h-full bg-white/5 rounded-lg border-2 border-dashed border-white/20">
             <ImageIcon className="w-12 h-12 text-white/40 mb-4" />
             <p className="text-sm text-white/60 mb-4">
@@ -1220,17 +1226,8 @@ export default function EditorView() {
               disabled={isGeneratingImage}
               className="flex items-center gap-2 px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-white/20"
             >
-              {isGeneratingImage ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating 5 images...
-                </>
-              ) : (
-                <>
-                  <ImageIcon className="w-4 h-4" />
-                  Generate Images
-                </>
-              )}
+              <ImageIcon className="w-4 h-4" />
+              Generate Images
             </button>
           </div>
         )}
@@ -1274,13 +1271,13 @@ export default function EditorView() {
                     onDoubleClick={() => !isGenerating && image.localPath && setPreviewImage(image)}
                     className={`relative aspect-video rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${
                       isSelected && !isGenerating
-                        ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                        ? 'border-white ring-2 ring-white/20'
+                        : 'border-white/20 hover:border-white/40'
                     } ${isGenerating ? 'cursor-not-allowed' : ''}`}
                   >
                     {isLoading ? (
-                      <div className="w-full h-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                        <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
+                      <div className="w-full h-full bg-white/5 flex items-center justify-center">
+                        <Loader2 className="w-8 h-8 text-white/40 animate-spin" />
                       </div>
                     ) : image.localPath ? (
                       <>
@@ -1290,14 +1287,14 @@ export default function EditorView() {
                           className="w-full h-full object-cover"
                         />
                         {isSelected && !isGenerating && (
-                          <div className="absolute top-2 right-2 bg-blue-500 text-white rounded-full p-1">
+                          <div className="absolute top-2 right-2 bg-white/20 backdrop-blur-sm border border-white/30 text-white rounded-full p-1">
                             <CheckCircle2 className="w-4 h-4" />
                           </div>
                         )}
                       </>
                     ) : (
-                      <div className="w-full h-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                        <ImageIcon className="w-8 h-8 text-gray-400" />
+                      <div className="w-full h-full bg-white/5 flex items-center justify-center">
+                        <ImageIcon className="w-8 h-8 text-white/40" />
                       </div>
                     )}
               </div>
@@ -1305,8 +1302,8 @@ export default function EditorView() {
               })}
             </div>
 
-            {/* Generate Video Button */}
-            {selectedImage && !isGeneratingImage && (
+            {/* Generate Video Button - Show as soon as one image is ready */}
+            {selectedImage && selectedImage.localPath && (
             <button
               onClick={handleGenerateVideo}
               disabled={isGeneratingVideo}
@@ -1320,7 +1317,11 @@ export default function EditorView() {
               ) : (
                 <>
                   <Video className="w-5 h-5" />
-                    Generate Video from Selected Image
+                  {isGeneratingImage ? (
+                    <>Generate Video from Selected Image (other images still generating...)</>
+                  ) : (
+                    <>Generate Video from Selected Image</>
+                  )}
                 </>
               )}
             </button>
