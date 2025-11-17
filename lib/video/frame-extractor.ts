@@ -2,7 +2,7 @@
  * Frame Extractor - FFmpeg Integration
  * 
  * This module handles extracting seed frames from video files using FFmpeg.
- * Extracts 5 frames from the last 0.5 seconds of a video for use as seed frames
+ * Extracts 5 frames from the last 1 second of a video for use as seed frames
  * in the next scene's video generation.
  */
 
@@ -20,10 +20,10 @@ const execAsync = promisify(exec);
 // ============================================================================
 
 const FRAME_COUNT = 5;
-const FRAME_DURATION = 0.5; // seconds from end
+const FRAME_DURATION = 1.0; // seconds from end (last 1 second)
 const FRAME_QUALITY = 2; // High quality (1-31, lower is better)
 const MAX_RETRIES = 1;
-const FRAME_TIMESTAMPS = [0.1, 0.2, 0.3, 0.4, 0.5]; // seconds from end
+const FRAME_TIMESTAMPS = [0.2, 0.4, 0.6, 0.8, 1.0]; // seconds from end (evenly spaced in last 1 second)
 
 // ============================================================================
 // Types
@@ -136,7 +136,7 @@ async function extractFramesWithFFmpeg(
 // ============================================================================
 
 /**
- * Extract 5 frames from the last 0.5 seconds of a video
+ * Extract 5 frames from the last 1 second of a video
  * 
  * @param videoPath - Path to the input video file
  * @param projectId - Project ID for organizing output files
@@ -179,8 +179,8 @@ export async function extractFrames(
   await fs.mkdir(outputDir, { recursive: true });
 
   // Extract frames at specific timestamps (relative to end of video)
-  // FRAME_TIMESTAMPS are relative to the end: [0.1, 0.2, 0.3, 0.4, 0.5]
-  // This means: 0.1s before end, 0.2s before end, etc.
+  // FRAME_TIMESTAMPS are relative to the end: [0.2, 0.4, 0.6, 0.8, 1.0]
+  // This means: 0.2s before end, 0.4s before end, etc. (evenly spaced in last 1 second)
   console.log(`[FrameExtractor] Extracting frames from video: ${videoPath}`);
   console.log(`[FrameExtractor] Video duration: ${videoInfo.duration}s`);
   console.log(`[FrameExtractor] Scene index: ${sceneIndex}`);
@@ -196,7 +196,7 @@ export async function extractFrames(
     throw new Error(`Cannot extract frames: Some timestamps (${invalidTimestamps.join(', ')}) are beyond video duration (${videoInfo.duration}s)`);
   }
   
-  // Verify we're extracting from the last 0.5 seconds
+  // Verify we're extracting from the last 1 second
   const earliestTimestamp = Math.min(...absoluteTimestamps);
   const expectedEarliest = Math.max(0, videoInfo.duration - FRAME_DURATION);
   if (Math.abs(earliestTimestamp - expectedEarliest) > 0.1) {
