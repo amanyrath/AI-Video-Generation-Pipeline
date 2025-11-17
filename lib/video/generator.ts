@@ -48,10 +48,12 @@ interface ReplicatePrediction {
 }
 
 interface ReplicateInput {
-  image: string; // Required: URL or Base64 string of the input image
+  image?: string; // Required for image-to-video models: URL or Base64 string of the input image
+  video?: string; // Required for Gen-4 Aleph: URL of the input video
   prompt: string; // Required: Text prompt guiding the video generation
   duration?: number; // Optional: Duration of the generated video in seconds
   resolution?: string; // Optional: Video resolution (e.g., '720p')
+  aspect_ratio?: string; // Optional: Aspect ratio for Gen-4 models (e.g., '16:9')
   negative_prompt?: string; // Optional: Text to specify elements to avoid
   enable_prompt_expansion?: boolean; // Optional: Enable prompt optimization (WAN models)
   seed?: number; // Optional: Random seed for reproducible generation
@@ -170,18 +172,40 @@ export async function createVideoPrediction(
   // Model-specific parameter handling
   // Gen-4 models may have different parameter names/requirements than WAN models
   const isGen4 = REPLICATE_MODEL.includes('gen4');
+  const isGen4Aleph = REPLICATE_MODEL.includes('gen4-aleph');
+  
+  // Gen-4 Aleph requires 'video' input, not 'image'
+  // Gen-4 Turbo uses 'image' input
+  // For Scene 0 (first scene), we should use Gen-4 Turbo, not Aleph
+  // If Aleph is selected for Scene 0, we need to handle it differently
+  if (isGen4Aleph && !seedFrame) {
+    // Gen-4 Aleph requires video input, but we only have an image for Scene 0
+    // This is a configuration error - Gen-4 Aleph should not be used for Scene 0
+    throw new Error('Gen-4 Aleph requires a video input. Use Gen-4 Turbo or another image-to-video model for Scene 0.');
+  }
   
   const input: ReplicateInput = {
-    image: inputImageUrl,
+    // Gen-4 Aleph uses 'video', others use 'image'
+    ...(isGen4Aleph ? {
+      video: inputImageUrl, // For Gen-4 Aleph, this should be a video URL
+    } : {
+      image: inputImageUrl,
+    }),
     prompt: prompt.trim(),
     // WAN models use 'duration' and 'resolution'
     // Gen-4 models may use different parameters - adjust if needed
     ...(isGen4 ? {
       // Gen-4 specific parameters (adjust based on actual API requirements)
-      // Note: Gen-4 may use 'duration' and 'resolution' or different names
-      // If Gen-4 has different requirements, update here
-      duration: validatedDuration,
-      resolution: VIDEO_RESOLUTION,
+      // Note: Gen-4 Turbo uses 'duration' and 'aspect_ratio' (not 'resolution')
+      // Gen-4 Aleph may have different requirements
+      ...(isGen4Aleph ? {
+        // Gen-4 Aleph parameters (video editing/transformation)
+        aspect_ratio: VIDEO_RESOLUTION === '720p' ? '16:9' : VIDEO_RESOLUTION === '1080p' ? '16:9' : '16:9',
+      } : {
+        // Gen-4 Turbo parameters (image-to-video)
+        duration: validatedDuration,
+        aspect_ratio: VIDEO_RESOLUTION === '720p' ? '16:9' : VIDEO_RESOLUTION === '1080p' ? '16:9' : '16:9',
+      }),
     } : {
       // WAN model parameters
       duration: validatedDuration,

@@ -313,6 +313,11 @@ export default function EditorView() {
     selectImage(currentSceneIndex, imageId);
   };
 
+  const handleRegenerateVideo = async () => {
+    // Regenerate video using the same logic as handleGenerateVideo
+    await handleGenerateVideo();
+  };
+
   const handleGenerateVideo = async () => {
     if (!project?.id) return;
 
@@ -1256,7 +1261,7 @@ export default function EditorView() {
             <button
               onClick={handleGenerateVideo}
               disabled={isGeneratingVideo}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/20 text-white rounded-lg hover:bg-white/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-white/20"
             >
               {isGeneratingVideo ? (
                 <>
@@ -1277,18 +1282,39 @@ export default function EditorView() {
         {sceneHasVideo && (
           <div className="space-y-4">
             {/* Video Preview */}
-            <VideoPlayer
-              src={sceneState?.videoLocalPath ? (
-                sceneState.videoLocalPath.startsWith('http://') || sceneState.videoLocalPath.startsWith('https://')
-                  ? sceneState.videoLocalPath // Use Replicate URL directly
-                  : `/api/serve-video?path=${encodeURIComponent(sceneState.videoLocalPath)}` // Use local path via API
-              ) : undefined}
-              className="w-full"
-            />
+            <div className="relative">
+              <VideoPlayer
+                src={sceneState?.videoLocalPath ? (
+                  sceneState.videoLocalPath.startsWith('http://') || sceneState.videoLocalPath.startsWith('https://')
+                    ? sceneState.videoLocalPath // Use Replicate URL directly
+                    : `/api/serve-video?path=${encodeURIComponent(sceneState.videoLocalPath)}` // Use local path via API
+                ) : undefined}
+                className="w-full"
+              />
+              {/* Regenerate Button */}
+              <button
+                onClick={handleRegenerateVideo}
+                disabled={isGeneratingVideo}
+                className="absolute top-4 right-4 px-4 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-white/20 backdrop-blur-sm flex items-center gap-2"
+                title="Regenerate video"
+              >
+                {isGeneratingVideo ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Regenerating...
+                  </>
+                ) : (
+                  <>
+                    <Video className="w-4 h-4" />
+                    Regenerate
+                  </>
+                )}
+              </button>
+            </div>
 
             {/* Seed Frame Selection */}
             {seedFrames.length > 0 && currentSceneIndex < 4 && (
-              <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+              <div className="mt-6 p-4 bg-white/5 rounded-lg border border-white/20">
                 <SeedFrameSelector
                   frames={seedFrames}
                   selectedFrameIndex={sceneState?.selectedSeedFrameIndex}
@@ -1301,7 +1327,7 @@ export default function EditorView() {
             <button
               onClick={handleApproveAndContinue}
               disabled={isExtractingFrames}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/20 text-white rounded-lg hover:bg-white/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-white/20"
             >
               {isExtractingFrames ? (
                 <>
