@@ -43,6 +43,12 @@ function WorkspaceContent() {
       return;
     }
 
+    // If we have a project in store, use it (even if projectId doesn't match - might be from navigation)
+    if (project && (!projectId || project.id === projectId)) {
+      // Project is already in store, no need to load
+      return;
+    }
+    
     // Load project if projectId is in URL but not in store
     if (projectId && !project) {
       setIsLoading(true);

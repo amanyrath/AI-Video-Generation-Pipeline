@@ -474,9 +474,21 @@ export default function MediaDrawer() {
           </div>
         )}
 
-        {/* Iteration Badge (for processed images) */}
-        {item.metadata?.iteration !== undefined && (
-          <div className="absolute top-2 left-2 px-2 py-1 bg-white/20 text-white text-xs rounded font-semibold border border-white/20">
+        {/* Label Badge (for uploaded images and processed versions) */}
+        {item.metadata?.label && (
+          <div className={`absolute top-1 left-1 px-2 py-1 text-white text-[10px] rounded font-medium ${
+            item.metadata.isOriginal 
+              ? 'bg-blue-600/90' 
+              : item.metadata.label.includes('Edge Cleaned')
+              ? 'bg-purple-600/90'
+              : 'bg-green-600/90'
+          }`}>
+            {item.metadata.label}
+          </div>
+        )}
+        {/* Fallback: Iteration Badge (for other processed images without label) */}
+        {!item.metadata?.label && item.metadata?.iteration !== undefined && (
+          <div className="absolute top-1 left-1 px-2 py-1 bg-purple-600/90 text-white text-[10px] rounded font-medium">
             {item.metadata.iteration === 0 ? 'Original' : `Iteration ${item.metadata.iteration}`}
           </div>
         )}
