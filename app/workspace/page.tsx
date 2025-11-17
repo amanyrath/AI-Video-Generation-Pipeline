@@ -2,7 +2,7 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useEffect, Suspense, useState } from 'react';
-import { useProjectStore } from '@/lib/state/project-store';
+import { useProjectStore, useProjectStore as projectStore } from '@/lib/state/project-store';
 import LeftPanel from '@/components/workspace/LeftPanel';
 import MiddlePanel from '@/components/workspace/MiddlePanel';
 import RightPanel from '@/components/workspace/RightPanel';
@@ -49,14 +49,22 @@ function WorkspaceContent() {
       loadProject(projectId)
         .catch((error) => {
           console.error('Failed to load project:', error);
-          // Redirect to home if project not found
-          window.location.href = '/';
+          // Don't redirect immediately - projects are in-memory only
+          // If project is not in store, it might be a navigation issue
+          // Wait a bit and check if project appears in store
+          setTimeout(() => {
+            const { project: currentProject } = projectStore.getState();
+            if (!currentProject) {
+              console.error('Project not found in store after retry, redirecting to home');
+              window.location.href = '/';
+            }
+          }, 500);
         })
         .finally(() => {
           setIsLoading(false);
         });
     } else if (!project && !projectId) {
-      // Redirect to home if no project
+      // Redirect to home if no project and no projectId
       window.location.href = '/';
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

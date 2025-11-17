@@ -423,6 +423,12 @@ export default function CharacterValidationScreen() {
       return;
     }
 
+    if (!project?.id) {
+      console.error('[CharacterValidation] No project ID available');
+      alert('Error: Project not found. Please try again.');
+      return;
+    }
+
     // Process and upload any additional reference images
     const additionalImageUrls: string[] = [];
 
@@ -432,7 +438,7 @@ export default function CharacterValidationScreen() {
         additionalImages.forEach((file) => {
           formData.append('images', file);
         });
-        formData.append('projectId', project?.id || '');
+        formData.append('projectId', project.id);
 
         const uploadResponse = await fetch('/api/upload-images', {
           method: 'POST',
@@ -455,17 +461,19 @@ export default function CharacterValidationScreen() {
     const allReferences = [...selectedImageUrls, ...additionalImageUrls];
     setCharacterReferences(allReferences);
 
-    // Navigate to workspace immediately
-    if (!project?.id) {
-      console.error('Cannot navigate: Project ID is missing');
-      const storeProject = useProjectStore.getState().project;
-      if (storeProject?.id) {
-        router.push(`/workspace?projectId=${storeProject.id}`);
-      } else {
-        router.push('/');
-      }
+    // Ensure project is in store before navigating
+    // The project should already be in store from StartingScreen, but verify
+    const currentProject = useProjectStore.getState().project;
+    if (!currentProject || currentProject.id !== project.id) {
+      console.error('[CharacterValidation] Project not in store, cannot navigate to workspace');
+      alert('Error: Project state lost. Please try creating a new project.');
       return;
     }
+
+    // Wait a moment to ensure store is updated, then navigate
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Navigate to workspace
     router.push(`/workspace?projectId=${project.id}`);
 
     // Upscale selected images in the background (non-blocking)
