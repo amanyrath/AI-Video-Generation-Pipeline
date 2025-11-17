@@ -71,53 +71,61 @@ async function getVideoInfo(videoPath: string): Promise<VideoInfo> {
 }
 
 /**
- * Extract frames from video using FFmpeg
+ * Extract frames from video using FFmpeg at specific timestamps
  */
 async function extractFramesWithFFmpeg(
   videoPath: string,
   outputDir: string,
-  startTime: number,
-  frameCount: number
+  videoDuration: number,
+  frameTimestamps: number[]
 ): Promise<string[]> {
   const framePaths: string[] = [];
 
   // Create output directory if it doesn't exist
   await fs.mkdir(outputDir, { recursive: true });
 
-  // Extract frames using FFmpeg
-  // -ss: seek to start time
-  // -vframes: number of frames to extract
-  // -q:v: quality (2 = high quality)
-  // -y: overwrite output files
-  const outputPattern = path.join(outputDir, 'frame_%d.png');
-  const command = `ffmpeg -ss ${startTime} -i "${videoPath}" -vframes ${frameCount} -q:v ${FRAME_QUALITY} -y "${outputPattern}"`;
-
-  try {
-    await execAsync(command);
+  // Extract frames at specific timestamps (relative to end of video)
+  // Each timestamp is relative to the end (e.g., 0.1 means 0.1s before the end)
+  // We need to calculate the absolute timestamp for each frame
+  for (let i = 0; i < frameTimestamps.length; i++) {
+    const relativeTimestamp = frameTimestamps[i];
+    // Calculate absolute timestamp: duration - relativeTimestamp
+    // e.g., if video is 3s long and relativeTimestamp is 0.1, extract at 2.9s
+    const absoluteTimestamp = Math.max(0, videoDuration - relativeTimestamp);
+    const framePath = path.join(outputDir, `frame_${i + 1}.png`);
     
-    // Verify frames were created
-    for (let i = 1; i <= frameCount; i++) {
-      const framePath = path.join(outputDir, `frame_${i}.png`);
+    // Extract single frame at specific timestamp
+    // -ss: seek to specific time (use input seeking for accuracy)
+    // -i: input file
+    // -vframes 1: extract only 1 frame
+    // -q:v: quality (2 = high quality)
+    // -y: overwrite output file
+    const command = `ffmpeg -ss ${absoluteTimestamp} -i "${videoPath}" -vframes 1 -q:v ${FRAME_QUALITY} -y "${framePath}"`;
+
+    try {
+      await execAsync(command);
+      
+      // Verify frame was created
       try {
         await fs.access(framePath);
         framePaths.push(framePath);
       } catch {
-        throw new Error(`Frame ${i} was not created at ${framePath}`);
+        throw new Error(`Frame ${i + 1} was not created at ${framePath}`);
       }
-    }
-
-    return framePaths;
-  } catch (error: any) {
-    // Clean up any partial frames
-    for (const framePath of framePaths) {
-      try {
-        await fs.unlink(framePath);
-      } catch {
-        // Ignore cleanup errors
+    } catch (error: any) {
+      // Clean up any partial frames
+      for (const createdPath of framePaths) {
+        try {
+          await fs.unlink(createdPath);
+        } catch {
+          // Ignore cleanup errors
+        }
       }
+      throw new Error(`FFmpeg frame extraction failed at timestamp ${relativeTimestamp}s: ${error.message}`);
     }
-    throw new Error(`FFmpeg frame extraction failed: ${error.message}`);
   }
+
+  return framePaths;
 }
 
 // ============================================================================
@@ -163,14 +171,13 @@ export async function extractFrames(
     throw new Error(`Failed to get video info: ${error.message}`);
   }
 
-  // Calculate start time (last 0.5 seconds)
-  const startTime = Math.max(0, videoInfo.duration - FRAME_DURATION);
-
   // Create output directory
   const outputDir = path.join('/tmp', 'projects', projectId, 'frames', `scene-${sceneIndex}`);
   await fs.mkdir(outputDir, { recursive: true });
 
-  // Extract frames with retry logic
+  // Extract frames at specific timestamps (relative to end of video)
+  // FRAME_TIMESTAMPS are relative to the end: [0.1, 0.2, 0.3, 0.4, 0.5]
+  // This means: 0.1s before end, 0.2s before end, etc.
   let framePaths: string[] = [];
   let lastError: Error | null = null;
 
@@ -179,8 +186,8 @@ export async function extractFrames(
       framePaths = await extractFramesWithFFmpeg(
         videoPath,
         outputDir,
-        startTime,
-        FRAME_COUNT
+        videoInfo.duration,
+        FRAME_TIMESTAMPS
       );
       break; // Success
     } catch (error: any) {

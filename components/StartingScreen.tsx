@@ -162,8 +162,30 @@ export default function StartingScreen({
           await onCreateProject(finalPrompt, allImages.length > 0 ? allImages : undefined, duration || targetDuration);
         }
         
-        // Navigate to character validation BEFORE storyboard generation
-        router.push('/character-validation');
+        // Ensure project exists before navigating - get fresh project ID
+        // Wait a moment for store to fully sync (Zustand updates are synchronous but React might need a tick)
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const finalProjectId = useProjectStore.getState().project?.id || projectId;
+        if (!finalProjectId) {
+          console.error('Cannot navigate: Project ID is missing after creation');
+          setError('Failed to create project. Please try again.');
+          return;
+        }
+        
+        // Double-check project is in store before navigating
+        const verifyProject = useProjectStore.getState().project;
+        if (!verifyProject || verifyProject.id !== finalProjectId) {
+          console.warn('[StartingScreen] Project not fully in store, waiting a bit more...');
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const finalCheck = useProjectStore.getState().project;
+          if (!finalCheck || finalCheck.id !== finalProjectId) {
+            console.error('[StartingScreen] Project still not in store after wait, but proceeding with navigation');
+          }
+        }
+        
+        // Navigate to character validation BEFORE storyboard generation with project ID in URL
+        router.push(`/character-validation?projectId=${finalProjectId}`);
         
         // Generate storyboard in background (non-blocking)
         generateStoryboardInBackground(finalPrompt, duration || targetDuration, referenceImageUrls);

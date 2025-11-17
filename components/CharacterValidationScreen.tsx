@@ -55,21 +55,37 @@ export default function CharacterValidationScreen() {
   });
   const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
 
-  const handleSkip = useCallback(() => {
+  const handleSkip = useCallback(async () => {
     // Skip character validation and go directly to workspace
-    if (!project?.id) {
-      console.error('Cannot skip: Project ID is missing');
-      // Try to get project from store state
-      const storeProject = useProjectStore.getState().project;
-      if (storeProject?.id) {
-        router.push(`/workspace?projectId=${storeProject.id}`);
-      } else {
-        // No project available, redirect to home
-        router.push('/');
+    // Try multiple sources for project ID with retries
+    const urlParams = new URLSearchParams(window.location.search);
+    let projectIdFromUrl = urlParams.get('projectId');
+    let projectIdFromStore = project?.id || useProjectStore.getState().project?.id;
+    
+    // If we have URL but not store, wait a bit for store to sync
+    if (projectIdFromUrl && !projectIdFromStore) {
+      console.log('[CharacterValidation] Project ID in URL but not in store, waiting for sync...');
+      for (let i = 0; i < 3; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        projectIdFromStore = useProjectStore.getState().project?.id;
+        if (projectIdFromStore === projectIdFromUrl) {
+          console.log(`[CharacterValidation] Project found in store after ${i + 1} retries`);
+          break;
+        }
       }
+    }
+    
+    const finalProjectId = projectIdFromUrl || projectIdFromStore;
+    
+    if (!finalProjectId) {
+      console.error('Cannot skip: Project ID is missing from both URL and store after retries');
+      // No project available, redirect to home
+      router.push('/');
       return;
     }
-    router.push(`/workspace?projectId=${project.id}`);
+    
+    console.log(`[CharacterValidation] Skipping to workspace with project ID: ${finalProjectId}`);
+    router.push(`/workspace?projectId=${finalProjectId}`);
   }, [router, project?.id]);
 
   const processUploadedImages = useCallback(async () => {
@@ -222,11 +238,53 @@ export default function CharacterValidationScreen() {
     // Just show the confirmation screen with description and reference images
   }, []);
 
-  // Check if project exists on mount
+  // Check if project exists on mount - with retry logic to handle race conditions
   useEffect(() => {
-    if (!project) {
-      console.warn('CharacterValidationScreen: No project found, redirecting to home');
-      router.push('/');
+    // First check: try to get project from URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectIdFromUrl = urlParams.get('projectId');
+    
+    if (projectIdFromUrl && !project) {
+      // Project ID in URL but not in store yet - wait for store to sync
+      // Use multiple retries with increasing delays to handle slower store updates
+      let retryCount = 0;
+      const maxRetries = 5;
+      const retryDelays = [200, 500, 1000, 1500, 2000]; // Progressive delays
+      
+      const checkProject = () => {
+        const storeProject = useProjectStore.getState().project;
+        if (storeProject?.id === projectIdFromUrl) {
+          // Project is now available, no redirect needed
+          console.log(`[CharacterValidation] Project found in store after ${retryCount} retries`);
+          return;
+        }
+        
+        retryCount++;
+        if (retryCount < maxRetries) {
+          // Retry with progressive delay
+          const delay = retryDelays[retryCount - 1] || 2000;
+          console.log(`[CharacterValidation] Project not in store yet, retrying in ${delay}ms (attempt ${retryCount}/${maxRetries})...`);
+          setTimeout(checkProject, delay);
+        } else {
+          // Still not available after all retries, redirect to home
+          console.error(`[CharacterValidation] Project ${projectIdFromUrl} not found in store after ${maxRetries} retries, redirecting to home`);
+          router.push('/');
+        }
+      };
+      
+      // Start checking after initial delay
+      const timeoutId = setTimeout(checkProject, retryDelays[0]);
+      return () => clearTimeout(timeoutId);
+    }
+    
+    // No project ID in URL and no project in store
+    if (!projectIdFromUrl && !project) {
+      // Give it one more chance - check store one more time
+      const storeProject = useProjectStore.getState().project;
+      if (!storeProject) {
+        console.warn('CharacterValidationScreen: No project found and no projectId in URL, redirecting to home');
+        router.push('/');
+      }
       return;
     }
   }, [project, router]);
@@ -306,26 +364,36 @@ export default function CharacterValidationScreen() {
 
   const handleConfirmGeneration = () => {
     // User confirmed - start generation
-    if (!project?.id) {
-      console.error('Cannot start generation: Project ID is missing');
-      // Try to get project from store state
-      const storeProject = useProjectStore.getState().project;
-      if (storeProject?.id) {
-        // Still navigate to workspace even without generation
-        router.push(`/workspace?projectId=${storeProject.id}`);
-      } else {
-        // No project available, redirect to home
-        router.push('/');
-      }
+    // Try multiple sources for project ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectIdFromUrl = urlParams.get('projectId');
+    const projectIdFromStore = project?.id || useProjectStore.getState().project?.id;
+    const finalProjectId = projectIdFromUrl || projectIdFromStore;
+    
+    if (!finalProjectId) {
+      console.error('Cannot start generation: Project ID is missing from both URL and store');
+      // No project available, redirect to home
+      router.push('/');
       return;
+    }
+    
+    // Ensure project is in store (update if needed)
+    if (!project?.id && projectIdFromUrl) {
+      const storeProject = useProjectStore.getState().project;
+      if (!storeProject || storeProject.id !== projectIdFromUrl) {
+        console.warn('Project ID from URL does not match store project, but continuing anyway');
+      }
     }
     
     setShowConfirmation(false);
     
-    if (hasUploadedImages && project?.uploadedImageUrls && project.uploadedImageUrls.length > 0) {
+    // Use project from store to ensure we have the latest state
+    const currentProject = useProjectStore.getState().project;
+    
+    if (hasUploadedImages && currentProject?.uploadedImageUrls && currentProject.uploadedImageUrls.length > 0) {
       // Process uploaded images - remove background
       processUploadedImages();
-    } else if (project?.characterDescription) {
+    } else if (currentProject?.characterDescription) {
       // Generate character variations
       generateCharacterVariations();
     } else {
@@ -462,10 +530,14 @@ export default function CharacterValidationScreen() {
     setCharacterReferences(allReferences);
 
     // Ensure project is in store before navigating
-    // The project should already be in store from StartingScreen, but verify
-    const currentProject = useProjectStore.getState().project;
-    if (!currentProject || currentProject.id !== project.id) {
-      console.error('[CharacterValidation] Project not in store, cannot navigate to workspace');
+    // Try multiple sources for project ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectIdFromUrl = urlParams.get('projectId');
+    const projectIdFromStore = project?.id || useProjectStore.getState().project?.id;
+    const finalProjectId = projectIdFromUrl || projectIdFromStore;
+    
+    if (!finalProjectId) {
+      console.error('[CharacterValidation] Project ID not available from URL or store');
       alert('Error: Project state lost. Please try creating a new project.');
       return;
     }
@@ -473,8 +545,8 @@ export default function CharacterValidationScreen() {
     // Wait a moment to ensure store is updated, then navigate
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Navigate to workspace
-    router.push(`/workspace?projectId=${project.id}`);
+    // Navigate to workspace with project ID
+    router.push(`/workspace?projectId=${finalProjectId}`);
 
     // Upscale selected images in the background (non-blocking)
     console.log(`[CharacterValidation] Upscaling ${selectedImages.length} selected images in background...`);

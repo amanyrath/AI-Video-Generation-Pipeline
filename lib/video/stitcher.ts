@@ -39,8 +39,11 @@ interface VideoInfo {
   height: number;
 }
 
+// Valid FFmpeg xfade transition types
+// Supported: fade, fadeblack, fadewhite, distance, wipeleft, wiperight, wipeup, wipedown,
+//            slideleft, slideright, slideup, slidedown, circlecrop, rectcrop
 interface TransitionConfig {
-  type: 'fade' | 'crossfade' | 'dissolve' | 'wipeleft' | 'wiperight' | 'none';
+  type: 'fade' | 'fadeblack' | 'fadewhite' | 'distance' | 'wipeleft' | 'wiperight' | 'none';
   duration: number;
 }
 
@@ -176,6 +179,10 @@ async function analyzeVideoSimilarity(
 
 /**
  * Select appropriate transition type and duration based on similarity score
+ * 
+ * Note: FFmpeg's xfade filter supports: fade, fadeblack, fadewhite, distance, 
+ * wipeleft, wiperight, wipeup, wipedown, slideleft, slideright, slideup, slidedown, etc.
+ * "crossfade" and "dissolve" are not valid - using "fade" and "distance" instead.
  */
 function selectTransition(similarity: number): TransitionConfig {
   if (similarity >= HIGH_SIMILARITY_THRESHOLD) {
@@ -185,16 +192,16 @@ function selectTransition(similarity: number): TransitionConfig {
       duration: MIN_TRANSITION_DURATION,
     };
   } else if (similarity >= MEDIUM_SIMILARITY_THRESHOLD) {
-    // Moderately similar - use crossfade
+    // Moderately similar - use fade (crossfade effect achieved with fade + audio crossfade)
     return {
-      type: 'crossfade',
+      type: 'fade',
       duration: DEFAULT_TRANSITION_DURATION,
     };
   } else {
-    // Different videos - use more pronounced transition
-    // Use dissolve for smooth blending
+    // Different videos - use distance transition for smooth blending
+    // "distance" creates a smooth dissolve-like effect
     return {
-      type: 'dissolve',
+      type: 'distance',
       duration: MAX_TRANSITION_DURATION,
     };
   }
@@ -290,25 +297,38 @@ function calculateTransitionOffsets(
 
 /**
  * Build FFmpeg filter_complex string for video transitions
+ * Returns the filter complex string and output labels
  */
 function buildTransitionFilter(
   videoCount: number,
   videoDurations: number[],
   transitions: TransitionConfig[],
   offsets: TransitionOffset[]
-): string {
+): { filterComplex: string; videoOutputLabel: string; audioOutputLabel: string } {
   const filters: string[] = [];
 
-  // Step 1: Trim each video to the correct segments
+  // Step 1: Trim each video to the correct segments and normalize
+  // Normalize frame rate to 30fps with motion interpolation for smooth playback
+  // Scale to common resolution for xfade compatibility
   for (let i = 0; i < videoCount; i++) {
     const offset = offsets[i];
     const trimStart = offset.startOffset;
     const trimEnd = offset.endOffset;
 
-    // Trim video
-    filters.push(`[${i}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS[v${i}]`);
-    // Trim audio (use anullsrc if audio doesn't exist to avoid errors)
-    filters.push(`[${i}:a]atrim=start=${trimStart}:end=${trimEnd},asetpts=PTS-STARTPTS[a${i}]`);
+    // Trim video, use minterpolate for smooth frame interpolation, normalize frame rate to 30fps
+    // minterpolate creates intermediate frames for smoother motion, reducing stuttering
+    // mi_mode=mci: motion-compensated interpolation for smooth transitions
+    // mc_mode=aobmc: adaptive overlapped block motion compensation
+    // me_mode=bidir: bidirectional motion estimation for better accuracy
+    // vsbmc=1: variable-size block motion compensation enabled
+    // Scale to 1920x1080 (or maintain aspect ratio)
+    // xfade requires inputs to have the same resolution and frame rate
+    // Note: If minterpolate fails, fallback to fps filter (handled by FFmpeg error handling)
+    filters.push(
+      `[${i}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS,minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1:scd=none,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v${i}]`
+    );
+    // Trim audio and normalize sample rate with better sync
+    filters.push(`[${i}:a]atrim=start=${trimStart}:end=${trimEnd},asetpts=PTS-STARTPTS,aresample=44100:async=1[a${i}]`);
   }
 
   // Step 2: Apply transitions between consecutive videos
@@ -351,11 +371,14 @@ function buildTransitionFilter(
     currentAudioLabel = newAudioLabel;
   }
 
-  // Step 3: Map final outputs
-  filters.push(`[${currentVideoLabel}]copy[vout]`);
-  filters.push(`[${currentAudioLabel}]copy[aout]`);
-
-  return filters.join(';');
+  // Step 3: Return the final labels for mapping
+  // The labels currentVideoLabel and currentAudioLabel are the final outputs
+  // We'll use these directly in the map command
+  return {
+    filterComplex: filters.join(';'),
+    videoOutputLabel: currentVideoLabel,
+    audioOutputLabel: currentAudioLabel,
+  };
 }
 
 /**
@@ -372,7 +395,7 @@ async function stitchVideosWithTransitions(
     const offsets = calculateTransitionOffsets(videoDurations, transitions);
 
     // Build filter complex
-    const filterComplex = buildTransitionFilter(
+    const { filterComplex, videoOutputLabel, audioOutputLabel } = buildTransitionFilter(
       videoPaths.length,
       videoDurations,
       transitions,
@@ -389,8 +412,11 @@ async function stitchVideosWithTransitions(
 
     // FFmpeg command with filter_complex
     // Use -shortest to handle videos with different durations
+    // Use -vsync cfr (constant frame rate) to prevent stuttering
     // Use -async 1 to sync audio properly
-    const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" -map "[vout]" -map "[aout]" -c:v libx264 -preset medium -crf 23 -c:a aac -b:a 192k -shortest -async 1 -y "${outputPath}"`;
+    // Use -r 30 to ensure output is exactly 30fps
+    // Map the final output labels from the filter chain
+    const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" -map "[${videoOutputLabel}]" -map "[${audioOutputLabel}]" -c:v libx264 -preset medium -crf 23 -r 30 -vsync cfr -c:a aac -b:a 192k -shortest -async 1 -y "${outputPath}"`;
 
     console.log(`[VideoStitcher] Stitching ${videoPaths.length} videos with transitions...`);
     console.log(`[VideoStitcher] Filter complex: ${filterComplex.substring(0, 200)}...`);
