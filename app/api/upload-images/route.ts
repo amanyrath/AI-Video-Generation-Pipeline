@@ -225,69 +225,9 @@ export async function POST(request: NextRequest) {
             console.log(`[Upload Images API] Created processed version ${iter + 1}/1 for image ${i + 1} (background removal)`);
           }
 
-            // Apply edge cleanup to the last background removal iteration (1 iteration only)
-            // This helps remove edge artifacts that can cause visible pixels in generated images
-            if (processedPaths.length > 0) {
-              try {
-                const lastBgRemovedPath = processedPaths[processedPaths.length - 1];
-                console.log(`[Upload Images API] Applying 1 edge cleanup iteration to processed image...`);
-                const cleanedPaths = await cleanupImageEdgesIterative(lastBgRemovedPath, 1);
-                
-                // Add all edge cleanup iterations as separate processed versions
-                // The last one will be the most refined
-                for (let cleanupIter = 0; cleanupIter < cleanedPaths.length; cleanupIter++) {
-                  const cleanedPath = cleanedPaths[cleanupIter];
-                  const stats = await fs.stat(cleanedPath);
-                  
-                  // Upload cleaned image to S3
-                  let cleanedUrl = cleanedPath;
-                  let cleanedS3Key: string | undefined;
-                  
-                  try {
-                    const s3Response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/upload-image-s3`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        imagePath: cleanedPath,
-                        projectId: projectId,
-                      }),
-                    });
-                    
-                    const s3Data = await s3Response.json();
-                    if (s3Data.success && s3Data.data?.s3Url) {
-                      cleanedUrl = s3Data.data.s3Url;
-                      cleanedS3Key = s3Data.data.s3Key;
-                    }
-                  } catch (s3Error: any) {
-                    console.warn(`[Upload Images API] S3 upload failed for edge-cleaned image ${cleanupIter + 1}, using local path`);
-                  }
-                  
-                  const edgeCleanedImage: ProcessedImage = {
-                    id: uuidv4(),
-                    iteration: processedVersions.length + cleanupIter + 1, // Continue numbering from background removal iterations
-                    url: cleanedUrl,
-                    localPath: cleanedPath,
-                    s3Key: cleanedS3Key,
-                    size: stats.size,
-                    createdAt: new Date().toISOString(),
-                  };
-                  
-                  processedVersions.push(edgeCleanedImage);
-                  console.log(`[Upload Images API] Created edge-cleaned version ${cleanupIter + 1}/1 for image ${i + 1}`);
-                }
-                
-                console.log(`[Upload Images API] Edge cleanup completed for image ${i + 1} (1 iteration)`);
-              } catch (edgeError: any) {
-                const edgeErrorMessage = edgeError.message || 'Unknown error';
-                console.warn(`[Upload Images API] Edge cleanup failed for image ${i + 1}, using un-cleaned version: ${edgeErrorMessage}`);
-                // Continue with un-cleaned version if edge cleanup fails
-                errors.push(`Image "${file.name}" edge cleanup: ${edgeErrorMessage}`);
-              }
-            }
-
             // Attach processed versions to uploaded image
             uploadedImage.processedVersions = processedVersions;
-            console.log(`[Upload Images API] Background removal completed for image ${i + 1} (${processedVersions.length} versions, last with edge cleanup)`);
+            console.log(`[Upload Images API] Background removal completed for image ${i + 1} (${processedVersions.length} version(s))`);
           } catch (bgError: any) {
             const bgErrorMessage = bgError.message || 'Unknown error';
             console.error(`[Upload Images API] Background removal failed for image ${i + 1}:`, bgErrorMessage);

@@ -662,18 +662,26 @@ export default function CharacterValidationScreen() {
                 <div className="space-y-4">
                   <h2 className="text-lg font-semibold text-white">Reference Images</h2>
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
-                    {project.uploadedImageUrls.map((url, index) => (
-                      <div
-                        key={index}
-                        className="relative aspect-square rounded-lg overflow-hidden border-2 border-white/20"
-                      >
-                        <img
-                          src={url}
-                          alt={`Reference ${index + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ))}
+                    {project.uploadedImageUrls.map((url, index) => {
+                      // Convert local paths to serveable URLs
+                      let imageUrl = url;
+                      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {
+                        imageUrl = `/api/serve-image?path=${encodeURIComponent(imageUrl)}`;
+                      }
+                      
+                      return (
+                        <div
+                          key={index}
+                          className="relative aspect-square rounded-lg overflow-hidden border-2 border-white/20"
+                        >
+                          <img
+                            src={imageUrl}
+                            alt={`Reference ${index + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                   <p className="text-xs text-white/60">
                     {project.uploadedImageUrls.length} reference image(s) will be used to generate character variations
@@ -759,28 +767,36 @@ export default function CharacterValidationScreen() {
               </div>
             ) : characterImages.length > 0 ? (
               <div className="grid grid-cols-5 gap-4">
-                {characterImages.map((image) => (
-                  <button
-                    key={image.id}
-                    onClick={() => handleImageSelect(image.id)}
-                    className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
-                      image.selected
-                        ? 'border-white ring-4 ring-white/20'
-                        : 'border-white/20 hover:border-white/40'
-                    }`}
-                  >
-                    <img
-                      src={image.url}
-                      alt="Character variation"
-                      className="w-full h-full object-cover"
-                    />
-                    {image.selected && (
-                      <div className="absolute top-2 right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center">
-                        <Check className="w-4 h-4 text-black" />
-                      </div>
-                    )}
-                  </button>
-                ))}
+                {characterImages.map((image) => {
+                  // Convert local paths to serveable URLs
+                  let imageUrl = image.url;
+                  if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {
+                    imageUrl = `/api/serve-image?path=${encodeURIComponent(imageUrl)}`;
+                  }
+                  
+                  return (
+                    <button
+                      key={image.id}
+                      onClick={() => handleImageSelect(image.id)}
+                      className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                        image.selected
+                          ? 'border-white ring-4 ring-white/20'
+                          : 'border-white/20 hover:border-white/40'
+                      }`}
+                    >
+                      <img
+                        src={imageUrl}
+                        alt="Character variation"
+                        className="w-full h-full object-cover"
+                      />
+                      {image.selected && (
+                        <div className="absolute top-2 right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center">
+                          <Check className="w-4 h-4 text-black" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               <div className="p-8 text-center border-2 border-dashed border-white/20 rounded-lg bg-white/5">
