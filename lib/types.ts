@@ -59,6 +59,7 @@ export interface ImageGenerationRequest {
   referenceImageUrls?: string[]; // Optional: URLs of uploaded reference images for style/context
   seedFrame?: string;        // Optional: Seed frame URL for IP-Adapter (for visual continuity in scenes 1-4)
   negativePrompt?: string;   // Optional: Negative prompt (what to avoid)
+  promptAdjustmentMode?: 'disabled' | 'less-aggressive' | 'scene-specific'; // Optional: How to adjust prompts when reference images are present
 }
 
 export interface ImageGenerationResponse {

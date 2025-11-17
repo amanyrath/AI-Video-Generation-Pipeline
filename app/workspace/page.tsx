@@ -62,7 +62,7 @@ function WorkspaceContent() {
             const { project: currentProject } = projectStore.getState();
             if (!currentProject) {
               console.error('Project not found in store after retry, redirecting to home');
-              window.location.href = '/';
+          window.location.href = '/';
             }
           }, 500);
         })

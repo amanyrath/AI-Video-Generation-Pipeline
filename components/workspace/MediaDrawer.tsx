@@ -420,9 +420,9 @@ export default function MediaDrawer() {
                 }
                 // Play this video
                 setPlayingVideoId(item.id);
-                video.play().catch(() => {
-                  // Ignore autoplay errors
-                });
+              video.play().catch(() => {
+                // Ignore autoplay errors
+              });
                 videoHoverTimeoutsMap.current.delete(item.id);
               }, 200);
               videoHoverTimeoutsMap.current.set(item.id, timeoutId);

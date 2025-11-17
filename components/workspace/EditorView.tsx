@@ -217,6 +217,11 @@ export default function EditorView() {
           // Strategy: Use seed frame as seed image for image-to-image generation
           // For Scene 0: Use reference image as seed image if available
           // For Scenes 1-4: Use seed frame from previous scene as seed image
+          // Get prompt adjustment mode from runtime config
+          const { getRuntimeConfig } = await import('@/lib/config/model-runtime');
+          const runtimeConfig = getRuntimeConfig();
+          const promptAdjustmentMode = runtimeConfig.promptAdjustmentMode || 'scene-specific';
+
           const response = await generateImage({
             prompt: currentScene.imagePrompt,
             projectId: project.id,
@@ -225,6 +230,7 @@ export default function EditorView() {
             referenceImageUrls, // Reference images via IP-Adapter (for object consistency)
             seedFrame: seedFrameUrl, // Seed frame URL (same as seedImage for scenes 1-4, unless custom image input is used)
             negativePrompt: currentScene.negativePrompt, // Optional negative prompt
+            promptAdjustmentMode, // Prompt adjustment mode from runtime config
           });
 
           // Check if predictionId exists

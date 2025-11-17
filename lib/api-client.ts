@@ -223,7 +223,7 @@ export async function uploadImages(
     }
 
     const result = await response.json();
-
+    
     // Extract URLs from uploaded images
     // Prefer the last processed version (most refined background removal) if available
     const urls = result.images?.map((img: any) => {
@@ -396,7 +396,7 @@ export async function generateVideo(
     }
 
     const result = await response.json();
-
+    
     // Extract predictionId from the nested data structure
     if (result.success && result.data?.predictionId) {
       return {
@@ -404,7 +404,7 @@ export async function generateVideo(
         status: 'starting',
       };
     }
-
+    
     throw new Error('Invalid response format from video generation API');
   });
 }

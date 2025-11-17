@@ -17,6 +17,7 @@ import {
 } from '@/lib/ai/image-generator';
 import { ImageGenerationRequest, ImageGenerationResponse } from '@/lib/types';
 import { uploadToS3, getS3Url } from '@/lib/storage/s3-uploader';
+import { DEFAULT_RUNTIME_CONFIG, PromptAdjustmentMode } from '@/lib/config/model-runtime';
 import path from 'path';
 
 // ============================================================================
@@ -27,62 +28,66 @@ import path from 'path';
  * Adjusts the prompt to be less specific about object details when a reference image is present.
  * This allows the reference image to define the object while the prompt focuses on scene composition.
  * 
- * Strategy:
- * - Replace specific object descriptions with generic references
- * - Keep scene composition, lighting, and background details
- * - Let the reference image define the object's appearance
- * 
  * @param originalPrompt The original prompt from the storyboard
+ * @param mode Adjustment mode: 'less-aggressive' keeps more scene details, 'aggressive' removes more
  * @returns Adjusted prompt that prioritizes reference image
  */
-function adjustPromptForReferenceImage(originalPrompt: string): string {
-  // ACTION 3: Make prompts even more generic - extract only scene composition, lighting, and background
-  // Remove ALL object-specific descriptions to let the reference image define the object
-  
+function adjustPromptForReferenceImage(originalPrompt: string, mode: 'less-aggressive' | 'aggressive' = 'less-aggressive'): string {
   let adjustedPrompt = originalPrompt;
 
-  // Remove all color/material descriptions that might override the reference image
-  adjustedPrompt = adjustedPrompt.replace(/\b(silver|black|red|blue|white|gray|grey|gold|metal|leather|wood|plastic|stainless steel|matte|glossy|shiny|dull)\s+/gi, '');
-  
-  // Remove all object type descriptions
-  adjustedPrompt = adjustedPrompt.replace(/\b(modern|sleek|luxury|sports|vintage|classic|premium|high-end|budget|affordable)\s+/gi, '');
-  
-  // Replace specific object mentions with generic reference
-  adjustedPrompt = adjustedPrompt.replace(/\b(car|vehicle|automobile|sedan|suv|coupe|convertible|sports car|luxury car|modern car|vintage car|classic car)\b/gi, 'the same object from the reference image');
-  adjustedPrompt = adjustedPrompt.replace(/\b(watch|timepiece|wristwatch|clock)\b/gi, 'the same object from the reference image');
-  adjustedPrompt = adjustedPrompt.replace(/\b(product|item|object|thing)\s+(with|featuring|showing|displaying)\s+[^,]+/gi, 'the same object from the reference image');
-  
-  // Remove object-specific features that might conflict with reference image
-  adjustedPrompt = adjustedPrompt.replace(/\b(with|featuring|showing|displaying|including)\s+[^,]+(headlights|wheels|tires|doors|windows|buttons|dials|straps|bands|bezels)\b/gi, '');
-  
-  // Keep only scene composition words: location, lighting, background, atmosphere
-  const sceneWords = [
-    'at', 'in', 'on', 'with', 'during', 'sunset', 'sunrise', 'background', 'foreground', 
-    'lighting', 'dramatic', 'soft', 'bright', 'dark', 'golden hour', 'blue hour',
-    'mountain', 'beach', 'city', 'street', 'road', 'track', 'studio', 'outdoor', 'indoor',
-    'positioned', 'placed', 'situated', 'located', 'standing', 'sitting', 'moving', 'stationary',
-    'vibrant', 'muted', 'warm', 'cool', 'natural', 'artificial', 'ambient', 'direct',
-    'blurred', 'sharp', 'focused', 'depth of field', 'bokeh', 'shallow', 'wide',
-    'atmosphere', 'mood', 'feeling', 'emotion', 'energy', 'dynamic', 'static', 'calm', 'energetic'
-  ];
-  
-  // Extract words that are scene-related
-  const words = adjustedPrompt.split(/\s+/);
-  const filteredWords = words.filter(word => {
-    const lowerWord = word.toLowerCase().replace(/[.,!?;:]/g, '');
-    return sceneWords.some(sceneWord => lowerWord.includes(sceneWord.toLowerCase())) ||
-           lowerWord.includes('reference') ||
-           lowerWord.includes('same') ||
-           lowerWord.includes('object') ||
-           lowerWord.length <= 3; // Keep short words (prepositions, articles)
-  });
-  
-  // Build new prompt with reference image emphasis
-  adjustedPrompt = `The same object from the reference image, ${filteredWords.join(' ')}`;
+  if (mode === 'aggressive') {
+    // OLD AGGRESSIVE MODE: Remove ALL object-specific descriptions
+    // Remove all color/material descriptions that might override the reference image
+    adjustedPrompt = adjustedPrompt.replace(/\b(silver|black|red|blue|white|gray|grey|gold|metal|leather|wood|plastic|stainless steel|matte|glossy|shiny|dull)\s+/gi, '');
+    
+    // Remove all object type descriptions
+    adjustedPrompt = adjustedPrompt.replace(/\b(modern|sleek|luxury|sports|vintage|classic|premium|high-end|budget|affordable)\s+/gi, '');
+    
+    // Replace specific object mentions with generic reference
+    adjustedPrompt = adjustedPrompt.replace(/\b(car|vehicle|automobile|sedan|suv|coupe|convertible|sports car|luxury car|modern car|vintage car|classic car)\b/gi, 'the same object from the reference image');
+    adjustedPrompt = adjustedPrompt.replace(/\b(watch|timepiece|wristwatch|clock)\b/gi, 'the same object from the reference image');
+    adjustedPrompt = adjustedPrompt.replace(/\b(product|item|object|thing)\s+(with|featuring|showing|displaying)\s+[^,]+/gi, 'the same object from the reference image');
+    
+    // Remove object-specific features that might conflict with reference image
+    adjustedPrompt = adjustedPrompt.replace(/\b(with|featuring|showing|displaying|including)\s+[^,]+(headlights|wheels|tires|doors|windows|buttons|dials|straps|bands|bezels)\b/gi, '');
+    
+    // Keep only scene composition words: location, lighting, background, atmosphere
+    const sceneWords = [
+      'at', 'in', 'on', 'with', 'during', 'sunset', 'sunrise', 'background', 'foreground', 
+      'lighting', 'dramatic', 'soft', 'bright', 'dark', 'golden hour', 'blue hour',
+      'mountain', 'beach', 'city', 'street', 'road', 'track', 'studio', 'outdoor', 'indoor',
+      'positioned', 'placed', 'situated', 'located', 'standing', 'sitting', 'moving', 'stationary',
+      'vibrant', 'muted', 'warm', 'cool', 'natural', 'artificial', 'ambient', 'direct',
+      'blurred', 'sharp', 'focused', 'depth of field', 'bokeh', 'shallow', 'wide',
+      'atmosphere', 'mood', 'feeling', 'emotion', 'energy', 'dynamic', 'static', 'calm', 'energetic'
+    ];
+    
+    // Extract words that are scene-related
+    const words = adjustedPrompt.split(/\s+/);
+    const filteredWords = words.filter(word => {
+      const lowerWord = word.toLowerCase().replace(/[.,!?;:]/g, '');
+      return sceneWords.some(sceneWord => lowerWord.includes(sceneWord.toLowerCase())) ||
+             lowerWord.includes('reference') ||
+             lowerWord.includes('same') ||
+             lowerWord.includes('object') ||
+             lowerWord.length <= 3; // Keep short words (prepositions, articles)
+    });
+    
+    // Build new prompt with reference image emphasis
+    adjustedPrompt = `The same object from the reference image, ${filteredWords.join(' ')}`;
+  } else {
+    // LESS AGGRESSIVE MODE: Only replace object type mentions, keep all scene details
+    // Replace specific object type mentions with generic reference (let reference image define the object)
+    // But keep all other details (action, scene composition, lighting, camera angles, etc.)
+    adjustedPrompt = adjustedPrompt.replace(/\b(car|vehicle|automobile|sedan|suv|coupe|convertible|sports car|luxury car|modern car|vintage car|classic car)\b/gi, 'the same object from the reference image');
+    adjustedPrompt = adjustedPrompt.replace(/\b(watch|timepiece|wristwatch|clock)\b/gi, 'the same object from the reference image');
+    
+    // Clean up duplicate phrases
+    adjustedPrompt = adjustedPrompt.replace(/\bthe same\s+object\s+from\s+the\s+reference\s+image\s+the\s+same\s+object\s+from\s+the\s+reference\s+image\b/gi, 'the same object from the reference image');
+  }
   
   // Clean up duplicate phrases and extra spaces
   adjustedPrompt = adjustedPrompt.replace(/\bthe same\s+the same\b/gi, 'the same');
-  adjustedPrompt = adjustedPrompt.replace(/\bthe same\s+object\s+from\s+the\s+reference\s+image\s+the\s+same\s+object\s+from\s+the\s+reference\s+image\b/gi, 'the same object from the reference image');
   adjustedPrompt = adjustedPrompt.replace(/\s+/g, ' '); // Multiple spaces to single space
   adjustedPrompt = adjustedPrompt.replace(/,\s*,/g, ','); // Multiple commas to single comma
   
@@ -317,14 +322,33 @@ export async function POST(request: NextRequest) {
       console.warn('[Image Generation API] WARNING: Some reference image URLs are not publicly accessible!');
     }
 
-    // OPTION 3: Adjust prompt strategy - make prompts less specific about object details
-    // When a reference image is present, modify the prompt to let the reference image define the object
-    // This reduces prompt influence and increases reference image influence
+    // Prompt adjustment strategy based on runtime config
+    // Get prompt adjustment mode from request body (sent from client) or use default
+    const promptAdjustmentMode: PromptAdjustmentMode = body.promptAdjustmentMode || DEFAULT_RUNTIME_CONFIG.promptAdjustmentMode || 'scene-specific';
+    
+    // Apply prompt adjustment based on mode
     if (referenceImageUrls.length > 0) {
-      prompt = adjustPromptForReferenceImage(prompt);
-      console.log(`[Image Generation API] Scene ${sceneIndex}: Adjusted prompt to prioritize reference image`);
-      console.log(`[Image Generation API] Original prompt: ${body.prompt.substring(0, 100)}...`);
-      console.log(`[Image Generation API] Adjusted prompt: ${prompt.substring(0, 100)}...`);
+      if (promptAdjustmentMode === 'disabled') {
+        // No adjustment - use full prompt
+        console.log(`[Image Generation API] Scene ${sceneIndex}: Prompt adjustment disabled - using full prompt`);
+      } else if (promptAdjustmentMode === 'scene-specific') {
+        // Scene-specific: Scene 1 uses full prompt (for dynamic shots), others use less-aggressive adjustment
+        if (sceneIndex === 1) {
+          console.log(`[Image Generation API] Scene ${sceneIndex}: Scene-specific mode - Scene 1 uses full prompt for dynamic shots`);
+          // Keep full prompt for Scene 1
+        } else {
+          prompt = adjustPromptForReferenceImage(prompt, 'less-aggressive');
+          console.log(`[Image Generation API] Scene ${sceneIndex}: Scene-specific mode - using less-aggressive prompt adjustment`);
+          console.log(`[Image Generation API] Original prompt: ${body.prompt.substring(0, 100)}...`);
+          console.log(`[Image Generation API] Adjusted prompt: ${prompt.substring(0, 100)}...`);
+        }
+      } else if (promptAdjustmentMode === 'less-aggressive') {
+        // Less aggressive: Only replace object type mentions, keep all scene details
+        prompt = adjustPromptForReferenceImage(prompt, 'less-aggressive');
+        console.log(`[Image Generation API] Scene ${sceneIndex}: Using less-aggressive prompt adjustment`);
+        console.log(`[Image Generation API] Original prompt: ${body.prompt.substring(0, 100)}...`);
+        console.log(`[Image Generation API] Adjusted prompt: ${prompt.substring(0, 100)}...`);
+      }
     }
 
     // Strategy: Use seed image for image-to-image generation
