@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import ImageDropZone from './ImageDropZone';
 import Take5Wizard from './Take5Wizard';
@@ -24,6 +24,11 @@ export default function StartingScreen({
   const [currentStep, setCurrentStep] = useState<number>(0); // 0 = initial prompt, 1-5 = wizard steps
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  
+  // Use ref to prevent race conditions from rapid clicks
+  const isSubmittingRef = useRef(false);
+  const navigationInProgressRef = useRef(false);
+  const isTransitioningRef = useRef(false);
 
   const router = useRouter();
   const { 
@@ -75,7 +80,13 @@ export default function StartingScreen({
   };
 
   const handleInitialPrompt = () => {
-    if (!prompt.trim() || loading) return;
+    // Prevent multiple rapid clicks (race condition fix)
+    if (!prompt.trim() || loading || isTransitioning || isTransitioningRef.current) {
+      console.warn('[StartingScreen] handleInitialPrompt called but already transitioning or invalid state');
+      return;
+    }
+    
+    isTransitioningRef.current = true;
     
     // Trigger crumble animation
     setIsTransitioning(true);
@@ -84,18 +95,48 @@ export default function StartingScreen({
     setTimeout(() => {
       setCurrentStep(1);
       setIsTransitioning(false);
+      isTransitioningRef.current = false;
     }, 800);
   };
 
   const handleWizardSubmit = async (combinedPrompt: string, wizardImages?: File[], duration?: number) => {
+    // Prevent multiple simultaneous submissions (race condition fix)
+    if (isSubmittingRef.current) {
+      console.warn('[StartingScreen] handleWizardSubmit called while already submitting, ignoring duplicate call');
+      return;
+    }
+    
+    // Prevent navigation if already in progress
+    if (navigationInProgressRef.current) {
+      console.warn('[StartingScreen] Navigation already in progress, ignoring duplicate submission');
+      return;
+    }
+
+    isSubmittingRef.current = true;
     setError(null);
     setIsLoading(true);
 
     try {
       // Combine initial prompt with wizard responses
       const finalPrompt = `${prompt}\n\n${combinedPrompt}`;
-      createProjectInStore(finalPrompt, duration || targetDuration);
+      
+      // Only create project if one doesn't already exist (prevent duplicate creation on rapid clicks)
+      const existingProject = useProjectStore.getState().project;
+      if (!existingProject) {
+        createProjectInStore(finalPrompt, duration || targetDuration);
+      } else {
+        console.log('[StartingScreen] Project already exists, reusing:', existingProject.id);
+      }
+      
+      // Get project ID - wait a tick to ensure store is updated
+      await new Promise(resolve => setTimeout(resolve, 0));
       const projectId = useProjectStore.getState().project?.id;
+      
+      if (!projectId) {
+        console.error('[StartingScreen] Failed to get project ID after creation');
+        setError('Failed to create project. Please try again.');
+        return;
+      }
 
       // Upload all images (initial + wizard)
       let referenceImageUrls: string[] = [];
@@ -132,8 +173,12 @@ export default function StartingScreen({
       }
 
       // Check if character validation is needed BEFORE storyboard generation
+      // Log the prompt for debugging
+      console.log('[StartingScreen] Checking character validation for prompt:', finalPrompt.substring(0, 100) + '...');
       const hasCharacters = detectCharactersOrProducts(finalPrompt);
       const hasImages = allImages.length > 0;
+      
+      console.log('[StartingScreen] Character detection result:', { hasCharacters, hasImages, promptLength: finalPrompt.length });
       
       if (hasCharacters || hasImages) {
         // Set flags for character validation screen
@@ -148,6 +193,10 @@ export default function StartingScreen({
           const characterDesc = extractCharacterDescription(finalPrompt);
           if (characterDesc) {
             setCharacterDescription(characterDesc);
+          } else {
+            // Set a placeholder if extraction fails - will be extracted on character validation screen
+            console.warn('[StartingScreen] Character description extraction returned empty, using full prompt as fallback');
+            setCharacterDescription(finalPrompt);
           }
         }
         
@@ -185,6 +234,8 @@ export default function StartingScreen({
         }
         
         // Navigate to character validation BEFORE storyboard generation with project ID in URL
+        navigationInProgressRef.current = true;
+        console.log('[StartingScreen] Navigating to character validation with projectId:', finalProjectId);
         router.push(`/character-validation?projectId=${finalProjectId}`);
         
         // Generate storyboard in background (non-blocking)
@@ -199,6 +250,8 @@ export default function StartingScreen({
 
         // Navigate to workspace
         const finalProjectId = useProjectStore.getState().project?.id || projectId;
+        navigationInProgressRef.current = true;
+        console.log('[StartingScreen] Navigating to workspace with projectId:', finalProjectId);
         if (finalProjectId) {
           router.push(`/workspace?projectId=${finalProjectId}`);
         } else {
@@ -207,6 +260,7 @@ export default function StartingScreen({
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+      console.error('[StartingScreen] Error in handleWizardSubmit:', errorMessage, err);
       setError(errorMessage);
       
       addChatMessage({
@@ -216,6 +270,8 @@ export default function StartingScreen({
       });
     } finally {
       setIsLoading(false);
+      isSubmittingRef.current = false;
+      // Note: navigationInProgressRef is not reset here because navigation should prevent further submissions
     }
   };
 
@@ -376,7 +432,7 @@ export default function StartingScreen({
             <div className="flex items-center justify-center pt-6">
               <button
                 onClick={handleInitialPrompt}
-                disabled={!prompt.trim() || loading}
+                disabled={!prompt.trim() || loading || isTransitioning || isTransitioningRef.current}
                 className="group relative px-10 py-5 bg-white text-black rounded-full text-lg font-medium hover:bg-white/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-3 shadow-2xl shadow-white/20"
               >
                 <span>Continue</span>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useProjectStore } from '@/lib/state/project-store';
 import { X, RefreshCw, Check, Loader2, Upload } from 'lucide-react';
@@ -54,6 +54,7 @@ export default function CharacterValidationScreen() {
     textFeedback: '',
   });
   const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
+  const isProcessingRef = useRef(false); // Prevent race conditions
 
   const handleSkip = useCallback(async () => {
     // Skip character validation and go directly to workspace
@@ -148,14 +149,24 @@ export default function CharacterValidationScreen() {
   }, [project?.uploadedImageUrls, project?.id]);
 
   const generateCharacterVariations = useCallback(async () => {
-    if (!project?.characterDescription) return;
+    // Get fresh project state
+    const currentProject = useProjectStore.getState().project;
+    const descriptionToUse = currentProject?.characterDescription || project?.characterDescription;
+    
+    // Allow generation even with generic description - it will use what's available
+    if (!descriptionToUse || descriptionToUse === 'Character from your video prompt') {
+      console.warn('[CharacterValidation] No valid character description, skipping generation and going to workspace');
+      // Instead of generating, skip to workspace
+      handleSkip();
+      return;
+    }
 
     setIsGenerating(true);
     setGenerationError(null);
 
     try {
       // Build style-aware prompt based on feedback
-      const stylePrompt = buildStylePrompt(project.characterDescription, feedback);
+      const stylePrompt = buildStylePrompt(descriptionToUse, feedback);
 
       // Generate 5 character variations based on reference photos
       // Images are NOT upscaled yet - upscaling happens after user selection
@@ -164,9 +175,9 @@ export default function CharacterValidationScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: stylePrompt,
-          projectId: project.id,
+          projectId: currentProject?.id || project?.id,
           count: 5, // Generate 5 variations for user selection
-          referenceImages: project.uploadedImageUrls || [], // Base on user's reference photos
+          referenceImages: currentProject?.uploadedImageUrls || project?.uploadedImageUrls || [], // Base on user's reference photos
         }),
       });
 
@@ -185,7 +196,7 @@ export default function CharacterValidationScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageUrls: generatedUrls,
-          projectId: project.id,
+          projectId: currentProject?.id || project?.id,
         }),
       });
 
@@ -230,7 +241,7 @@ export default function CharacterValidationScreen() {
     } finally {
       setIsGenerating(false);
     }
-  }, [project?.characterDescription, project?.id, feedback]);
+  }, [project?.characterDescription, project?.id, feedback, handleSkip]);
 
   // Initialize on mount - wait for user confirmation before generation
   useEffect(() => {
@@ -307,25 +318,32 @@ export default function CharacterValidationScreen() {
       setIsExtractingDescription(true);
       
       try {
+        console.log('[CharacterValidation] Starting character description extraction...');
         const response = await fetch('/api/extract-character-description', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fullPrompt: project.characterDescription }),
         });
 
+        if (!response.ok) {
+          throw new Error(`Extraction API returned ${response.status}`);
+        }
+
         const data = await response.json();
         if (data.success && data.characterDescription) {
+          console.log('[CharacterValidation] Character description extracted successfully');
           setCleanDescription(data.characterDescription);
           setTempDescription(data.characterDescription); // Initialize edit buffer with clean description (Issue #9 fix)
         } else {
           // Fallback: use first sentence instead of full prompt (Issue #6 fix)
+          console.warn('[CharacterValidation] Extraction API returned no description, using fallback');
           const firstSentence = project.characterDescription.split(/[.!?]/)[0].trim();
           const fallback = firstSentence || 'Character from your video prompt';
           setCleanDescription(fallback);
           setTempDescription(fallback);
         }
       } catch (error) {
-        console.error('Failed to extract clean description:', error);
+        console.error('[CharacterValidation] Failed to extract clean description:', error);
         // Fallback: use first sentence instead of full prompt (Issue #6 fix)
         const firstSentence = project.characterDescription.split(/[.!?]/)[0].trim();
         const fallback = firstSentence || 'Character from your video prompt';
@@ -333,6 +351,7 @@ export default function CharacterValidationScreen() {
         setTempDescription(fallback);
       } finally {
         setIsExtractingDescription(false);
+        console.log('[CharacterValidation] Character description extraction completed');
       }
     };
 
@@ -362,44 +381,101 @@ export default function CharacterValidationScreen() {
     setEditingDescription(false);
   };
 
-  const handleConfirmGeneration = () => {
-    // User confirmed - start generation
-    // Try multiple sources for project ID
-    const urlParams = new URLSearchParams(window.location.search);
-    const projectIdFromUrl = urlParams.get('projectId');
-    const projectIdFromStore = project?.id || useProjectStore.getState().project?.id;
-    const finalProjectId = projectIdFromUrl || projectIdFromStore;
-    
-    if (!finalProjectId) {
-      console.error('Cannot start generation: Project ID is missing from both URL and store');
-      // No project available, redirect to home
-      router.push('/');
+  const handleConfirmGeneration = async () => {
+    // Prevent multiple rapid clicks (race condition fix)
+    if (isProcessingRef.current) {
+      console.warn('[CharacterValidation] handleConfirmGeneration called while already processing, ignoring duplicate call');
       return;
     }
     
-    // Ensure project is in store (update if needed)
-    if (!project?.id && projectIdFromUrl) {
-      const storeProject = useProjectStore.getState().project;
-      if (!storeProject || storeProject.id !== projectIdFromUrl) {
-        console.warn('Project ID from URL does not match store project, but continuing anyway');
+    isProcessingRef.current = true;
+    
+    try {
+      // User confirmed - start generation
+      // Try multiple sources for project ID
+      const urlParams = new URLSearchParams(window.location.search);
+      const projectIdFromUrl = urlParams.get('projectId');
+      const projectIdFromStore = project?.id || useProjectStore.getState().project?.id;
+      const finalProjectId = projectIdFromUrl || projectIdFromStore;
+      
+      if (!finalProjectId) {
+        console.error('Cannot start generation: Project ID is missing from both URL and store');
+        // No project available, redirect to home
+        router.push('/');
+        return;
       }
+      
+      // Ensure project is in store (update if needed)
+      if (!project?.id && projectIdFromUrl) {
+        const storeProject = useProjectStore.getState().project;
+        if (!storeProject || storeProject.id !== projectIdFromUrl) {
+          console.warn('Project ID from URL does not match store project, but continuing anyway');
+        }
+      }
+      
+      // Wait for character description extraction to complete if still in progress
+      if (isExtractingDescription) {
+        console.log('[CharacterValidation] Waiting for character description extraction to complete...');
+        // Wait up to 5 seconds for extraction to complete
+        let waitCount = 0;
+        while (isExtractingDescription && waitCount < 50) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          waitCount++;
+        }
+        if (isExtractingDescription) {
+          console.warn('[CharacterValidation] Character description extraction taking too long, proceeding anyway');
+        }
+      }
+      
+      // Get fresh project state after extraction
+      const currentProject = useProjectStore.getState().project;
+      
+      // Check if we have a valid character description (not generic fallback)
+      const hasValidDescription = currentProject?.characterDescription && 
+                                   currentProject.characterDescription !== 'Character from your video prompt' &&
+                                   cleanDescription && 
+                                   cleanDescription !== 'Character from your video prompt';
+      
+      console.log('[CharacterValidation] Starting generation with:', {
+        hasValidDescription,
+        hasUploadedImages,
+        characterDescription: currentProject?.characterDescription?.substring(0, 50) + '...',
+        cleanDescription: cleanDescription?.substring(0, 50) + '...',
+      });
+      
+      if (!hasValidDescription && !hasUploadedImages) {
+        console.warn('[CharacterValidation] No valid character description yet, but proceeding with generation');
+        // Continue anyway - generation will use what's available
+      }
+      
+      setShowConfirmation(false);
+      
+      // If we only have a generic description and no images, skip generation and go to workspace
+      if (!hasValidDescription && !hasUploadedImages) {
+        console.log('[CharacterValidation] Only generic description available, skipping generation and going to workspace...');
+        await handleSkip();
+        return;
+      }
+      
+      if (hasUploadedImages && currentProject?.uploadedImageUrls && currentProject.uploadedImageUrls.length > 0) {
+        // Process uploaded images - remove background
+        console.log('[CharacterValidation] Processing uploaded images...');
+        processUploadedImages();
+      } else if (hasValidDescription && currentProject?.characterDescription) {
+        // Generate character variations (only if we have a valid description)
+        console.log('[CharacterValidation] Generating character variations...');
+        generateCharacterVariations();
+      } else {
+        // No validation needed - skip to workspace
+        console.log('[CharacterValidation] No valid character description or images, skipping to workspace...');
+        await handleSkip();
+      }
+    } catch (error) {
+      console.error('[CharacterValidation] Error in handleConfirmGeneration:', error);
+      // Reset on error so user can retry
+      isProcessingRef.current = false;
     }
-    
-    setShowConfirmation(false);
-    
-    // Use project from store to ensure we have the latest state
-    const currentProject = useProjectStore.getState().project;
-    
-    if (hasUploadedImages && currentProject?.uploadedImageUrls && currentProject.uploadedImageUrls.length > 0) {
-      // Process uploaded images - remove background
-      processUploadedImages();
-    } else if (currentProject?.characterDescription) {
-      // Generate character variations
-      generateCharacterVariations();
-    } else {
-      // No validation needed
-      handleSkip();
-    }
+    // Note: isProcessingRef is not reset on success because generation should prevent further clicks
   };
 
   const buildStylePrompt = (description: string, feedback: FeedbackState): string => {
@@ -699,10 +775,16 @@ export default function CharacterValidationScreen() {
                 </button>
 
                 <button
-                  onClick={handleConfirmGeneration}
-                  className="px-8 py-3 rounded-full bg-white text-black text-base font-semibold hover:bg-white/90 transition-colors"
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleConfirmGeneration();
+                  }}
+                  disabled={isProcessingRef.current || isExtractingDescription}
+                  className="px-8 py-3 rounded-full bg-white text-black text-base font-semibold hover:bg-white/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Start Generation
+                  {isExtractingDescription ? 'Preparing...' : 'Start Generation'}
                 </button>
               </div>
             </div>

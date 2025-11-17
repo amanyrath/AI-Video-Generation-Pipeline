@@ -266,6 +266,8 @@ async function validateVideoCompatibility(videoPaths: string[]): Promise<void> {
 
 /**
  * Calculate transition offsets for each video based on durations and transitions
+ * For xfade, we don't need to trim videos - xfade handles the overlap automatically
+ * We just need to calculate when transitions should occur in the final timeline
  */
 function calculateTransitionOffsets(
   videoDurations: number[],
@@ -276,34 +278,28 @@ function calculateTransitionOffsets(
 
   for (let i = 0; i < videoDurations.length; i++) {
     const duration = videoDurations[i];
-    let startOffset = 0;
-    let endOffset = duration;
-    let transitionStart = currentTime;
-
-    // For videos after the first, trim the beginning to accommodate transition
-    if (i > 0) {
-      const prevTransition = transitions[i - 1];
-      startOffset = prevTransition.duration / 2;
-    }
-
-    // For videos before the last, trim the end to accommodate transition
-    if (i < videoDurations.length - 1) {
-      const nextTransition = transitions[i];
-      endOffset = duration - (nextTransition.duration / 2);
-    }
+    
+    // Don't trim videos - use full duration
+    // xfade will handle the overlap automatically
+    const startOffset = 0;
+    const endOffset = duration;
 
     offsets.push({
       videoIndex: i,
       startOffset,
       endOffset,
-      transitionStart: currentTime + (i > 0 ? transitions[i - 1].duration / 2 : 0),
+      transitionStart: currentTime,
     });
 
     // Calculate next video start time
+    // Each video contributes its full duration, but transitions overlap
+    // So total time = sum of durations - sum of transition durations
     if (i < videoDurations.length - 1) {
-      currentTime += endOffset - startOffset;
+      // Current video plays fully, then transition overlaps with next video
+      currentTime += duration - transitions[i].duration;
     } else {
-      currentTime += duration - startOffset;
+      // Last video plays fully
+      currentTime += duration;
     }
   }
 
@@ -324,16 +320,20 @@ function buildTransitionFilter(
   const filters: string[] = [];
   const anyHasAudio = hasAudioStreams.some(has => has);
 
-  // Step 1: Trim each video to the correct segments and normalize
+  // Step 1: Normalize each video (don't trim - xfade handles overlap)
   // Normalize frame rate to 30fps with motion interpolation for smooth playback
   // Scale to common resolution for xfade compatibility
   for (let i = 0; i < videoCount; i++) {
-    const offset = offsets[i];
-    const trimStart = offset.startOffset;
-    const trimEnd = offset.endOffset;
     const hasAudio = hasAudioStreams[i];
+    const videoDuration = videoDurations[i];
 
-    // Trim video, use minterpolate for smooth frame interpolation, normalize frame rate to 30fps
+    console.log(
+      `[VideoStitcher] Video ${i}: using full duration ${videoDuration.toFixed(2)}s (no trimming)`
+    );
+
+    // Don't trim videos - use full duration
+    // xfade will handle the overlap automatically
+    // Use minterpolate for smooth frame interpolation, normalize frame rate to 30fps
     // minterpolate creates intermediate frames for smoother motion, reducing stuttering
     // mi_mode=mci: motion-compensated interpolation for smooth transitions
     // mc_mode=aobmc: adaptive overlapped block motion compensation
@@ -343,72 +343,150 @@ function buildTransitionFilter(
     // xfade requires inputs to have the same resolution and frame rate
     // Note: If minterpolate fails, fallback to fps filter (handled by FFmpeg error handling)
     filters.push(
-      `[${i}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS,minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1:scd=none,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v${i}]`
+      `[${i}:v]setpts=PTS-STARTPTS,minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1:scd=none,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v${i}]`
     );
     
     // Only process audio if this video has an audio stream
     // If no videos have audio, we skip audio processing entirely
     if (anyHasAudio) {
       if (hasAudio) {
-        // Trim audio and normalize sample rate with better sync
-        filters.push(`[${i}:a]atrim=start=${trimStart}:end=${trimEnd},asetpts=PTS-STARTPTS,aresample=44100:async=1[a${i}]`);
+        // Use full audio - no trimming
+        filters.push(`[${i}:a]asetpts=PTS-STARTPTS,aresample=44100:async=1[a${i}]`);
       } else {
         // Generate silent audio track for videos without audio (to match videos with audio)
-        const trimmedDuration = trimEnd - trimStart;
-        filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:${trimmedDuration},asetpts=PTS-STARTPTS[a${i}]`);
+        filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:${videoDuration},asetpts=PTS-STARTPTS[a${i}]`);
       }
     }
   }
 
-  // Step 2: Apply transitions between consecutive videos
-  let currentVideoLabel = 'v0';
-  let currentAudioLabel: string | null = anyHasAudio ? 'a0' : null;
-  let videoLabelCounter = videoCount;
-  let audioLabelCounter = videoCount;
-
-  for (let i = 0; i < videoCount - 1; i++) {
-    const transition = transitions[i];
-    const offset = offsets[i];
-    const nextVideoLabel = `v${i + 1}`;
-    const nextAudioLabel = anyHasAudio ? `a${i + 1}` : null;
+  // Step 2: Apply fade effects and prepare for concat
+  // Instead of chaining xfade (which has timing issues), use fadein/fadeout + concat
+  const fadeFilters: string[] = [];
+  const concatVideoLabels: string[] = [];
+  const concatAudioLabels: string[] = [];
+  
+  for (let i = 0; i < videoCount; i++) {
+    const hasAudio = hasAudioStreams[i];
+    const videoDuration = videoDurations[i];
+    const videoLabel = `v${i}`;
+    const audioLabel = anyHasAudio ? `a${i}` : null;
     
-    // Calculate transition offset: when the transition should start in the final timeline
-    // This is the end of the current trimmed video minus transition duration
-    const trimmedDuration = offset.endOffset - offset.startOffset;
-    const transitionOffset = trimmedDuration - transition.duration;
-
-    // Apply video transition
-    if (transition.type === 'none') {
-      // No transition, just concatenate
-      const newVideoLabel = `v${videoLabelCounter++}`;
-      filters.push(`[${currentVideoLabel}][${nextVideoLabel}]concat=n=2:v=1:a=0[${newVideoLabel}]`);
-      currentVideoLabel = newVideoLabel;
-    } else {
-      // Use xfade for video transition
-      const newVideoLabel = `v${videoLabelCounter++}`;
-      filters.push(
-        `[${currentVideoLabel}][${nextVideoLabel}]xfade=transition=${transition.type}:duration=${transition.duration}:offset=${transitionOffset}[${newVideoLabel}]`
+    // Apply fadeout to all videos except the last
+    // Apply fadein to all videos except the first
+    // The fade duration should match the transition duration
+    let processedVideoLabel = videoLabel;
+    let processedAudioLabel = audioLabel;
+    
+    if (i === 0 && videoCount > 1) {
+      // First video: fadeout at the end
+      const transition = transitions[0];
+      const fadeStart = Math.max(0, videoDuration - transition.duration);
+      processedVideoLabel = `vf${i}`;
+      fadeFilters.push(
+        `[${videoLabel}]fade=t=out:st=${fadeStart}:d=${transition.duration}[${processedVideoLabel}]`
       );
-      currentVideoLabel = newVideoLabel;
+      if (anyHasAudio && audioLabel) {
+        processedAudioLabel = `af${i}`;
+        fadeFilters.push(
+          `[${audioLabel}]afade=t=out:st=${fadeStart}:d=${transition.duration}[${processedAudioLabel}]`
+        );
+      }
+    } else if (i === videoCount - 1 && videoCount > 1) {
+      // Last video: fadein at the start
+      const transition = transitions[i - 1];
+      processedVideoLabel = `vf${i}`;
+      fadeFilters.push(
+        `[${videoLabel}]fade=t=in:st=0:d=${transition.duration}[${processedVideoLabel}]`
+      );
+      if (anyHasAudio && audioLabel) {
+        processedAudioLabel = `af${i}`;
+        fadeFilters.push(
+          `[${audioLabel}]afade=t=in:st=0:d=${transition.duration}[${processedAudioLabel}]`
+        );
+      }
+    } else if (videoCount > 2) {
+      // Middle videos: both fadein and fadeout
+      const prevTransition = transitions[i - 1];
+      const nextTransition = transitions[i];
+      processedVideoLabel = `vf${i}`;
+      const tempLabel = `vt${i}`;
+      // First fadein
+      fadeFilters.push(
+        `[${videoLabel}]fade=t=in:st=0:d=${prevTransition.duration}[${tempLabel}]`
+      );
+      // Then fadeout
+      const fadeStart = Math.max(prevTransition.duration, videoDuration - nextTransition.duration);
+      fadeFilters.push(
+        `[${tempLabel}]fade=t=out:st=${fadeStart}:d=${nextTransition.duration}[${processedVideoLabel}]`
+      );
+      if (anyHasAudio && audioLabel) {
+        processedAudioLabel = `af${i}`;
+        const tempAudioLabel = `at${i}`;
+        fadeFilters.push(
+          `[${audioLabel}]afade=t=in:st=0:d=${prevTransition.duration}[${tempAudioLabel}]`
+        );
+        fadeFilters.push(
+          `[${tempAudioLabel}]afade=t=out:st=${fadeStart}:d=${nextTransition.duration}[${processedAudioLabel}]`
+        );
+      }
     }
-
-    // Apply audio crossfade only if we have audio streams
-    if (anyHasAudio && currentAudioLabel && nextAudioLabel) {
-      const newAudioLabel = `a${audioLabelCounter++}`;
-      filters.push(
-        `[${currentAudioLabel}][${nextAudioLabel}]acrossfade=d=${transition.duration}[${newAudioLabel}]`
-      );
-      currentAudioLabel = newAudioLabel;
+    
+    concatVideoLabels.push(`[${processedVideoLabel}]`);
+    
+    // For concat with audio, ALL videos must have audio streams
+    // If anyHasAudio is true, we must have an audio label for every video
+    if (anyHasAudio) {
+      // Determine the final audio label to use
+      // Priority: processedAudioLabel (if we applied fades) > audioLabel (original) > a{i} (fallback)
+      let finalAudioLabel: string;
+      if (processedAudioLabel) {
+        // We processed audio with fades
+        finalAudioLabel = processedAudioLabel;
+      } else if (audioLabel) {
+        // Use the original audio label (either from video or generated silent)
+        finalAudioLabel = audioLabel;
+      } else {
+        // Fallback: should never happen if anyHasAudio is true, but just in case
+        finalAudioLabel = `a${i}`;
+      }
+      concatAudioLabels.push(`[${finalAudioLabel}]`);
+      console.log(`[VideoStitcher] Video ${i}: video=[${processedVideoLabel}], audio=[${finalAudioLabel}]`);
     }
   }
+  
+  // Combine fade filters with the original video processing
+  filters.push(...fadeFilters);
+  
+  // Step 3: Concatenate all videos
+  const concatInputs = concatVideoLabels.length;
+  
+  // Validate that we have the right number of audio streams if audio is enabled
+  if (anyHasAudio && concatAudioLabels.length !== concatVideoLabels.length) {
+    console.error(`[VideoStitcher] Audio stream count mismatch: ${concatVideoLabels.length} video streams but ${concatAudioLabels.length} audio streams`);
+    console.error(`[VideoStitcher] Video labels: ${concatVideoLabels.join(', ')}`);
+    console.error(`[VideoStitcher] Audio labels: ${concatAudioLabels.join(', ')}`);
+    throw new Error(
+      `Audio stream count mismatch: ${concatVideoLabels.length} video streams but ${concatAudioLabels.length} audio streams`
+    );
+  }
+  
+  // Concat filter syntax: [v0][v1][v2][a0][a1][a2]concat=n=3:v=1:a=1[vout][aout]
+  // Important: ALL video inputs first, then ALL audio inputs
+  const concatInputString = concatVideoLabels.join('') + (anyHasAudio ? concatAudioLabels.join('') : '');
+  const concatFilter = `concat=n=${concatInputs}:v=1${anyHasAudio ? ':a=1' : ''}`;
+  const concatOutput = `[vout]${anyHasAudio ? '[aout]' : ''}`;
+  
+  const concatFilterString = `${concatInputString}${concatFilter}${concatOutput}`;
+  filters.push(concatFilterString);
+  
+  console.log(`[VideoStitcher] Using concat method with ${concatInputs} videos`);
+  console.log(`[VideoStitcher] Concat filter: ${concatFilterString.substring(0, 300)}...`);
 
-  // Step 3: Return the final labels for mapping
-  // The labels currentVideoLabel and currentAudioLabel are the final outputs
-  // We'll use these directly in the map command
+  // Step 4: Return the final labels for mapping
   return {
     filterComplex: filters.join(';'),
-    videoOutputLabel: currentVideoLabel,
-    audioOutputLabel: currentAudioLabel,
+    videoOutputLabel: 'vout',
+    audioOutputLabel: anyHasAudio ? 'aout' : null,
   };
 }
 
@@ -444,7 +522,8 @@ async function stitchVideosWithTransitions(
       .join(' ');
 
     // FFmpeg command with filter_complex
-    // Use -shortest to handle videos with different durations
+    // Note: Do NOT use -shortest here - it will truncate the output to the shortest stream
+    // The filter_complex with xfade already handles timing correctly
     // Use -fps_mode cfr (constant frame rate) to prevent stuttering (replaces deprecated -vsync)
     // Use -async 1 to sync audio properly (only if we have audio)
     // Use -r 30 to ensure output is exactly 30fps
@@ -453,10 +532,11 @@ async function stitchVideosWithTransitions(
       ? `-map "[${videoOutputLabel}]" -map "[${audioOutputLabel}]" -c:a aac -b:a 192k -async 1`
       : `-map "[${videoOutputLabel}]" -an`; // -an means no audio
     
-    const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" ${mapArgs} -c:v libx264 -preset medium -crf 23 -r 30 -fps_mode cfr -shortest -y "${outputPath}"`;
+    const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" ${mapArgs} -c:v libx264 -preset medium -crf 23 -r 30 -fps_mode cfr -y "${outputPath}"`;
 
     console.log(`[VideoStitcher] Stitching ${videoPaths.length} videos with transitions...`);
-    console.log(`[VideoStitcher] Filter complex: ${filterComplex.substring(0, 200)}...`);
+    console.log(`[VideoStitcher] Full filter complex: ${filterComplex}`);
+    console.log(`[VideoStitcher] Full FFmpeg command: ${command}`);
     await execAsync(command);
   } catch (error: any) {
     throw new Error(`FFmpeg transition stitching failed: ${error.message}`);
@@ -514,6 +594,8 @@ export async function stitchVideos(
     const videoDurations = videoInfos.map((info) => info.duration);
     const hasAudioStreams = videoInfos.map((info) => info.hasAudio);
     
+    console.log(`[VideoStitcher] Video durations: ${videoDurations.map((d, i) => `Video ${i}: ${d.toFixed(2)}s`).join(', ')}`);
+    console.log(`[VideoStitcher] Total duration: ${videoDurations.reduce((a, b) => a + b, 0).toFixed(2)}s`);
     console.log(`[VideoStitcher] Audio streams detected: ${hasAudioStreams.filter(h => h).length}/${videoPaths.length} videos have audio`);
 
     // Handle single video case (no transitions needed)
