@@ -30,20 +30,9 @@ export async function GET() {
       // Note: This requires @ffmpeg-installer/ffmpeg to be installed
       // If not installed, this will fail gracefully
       try {
-        // Use require with try-catch to handle missing module gracefully
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-        if (ffmpegInstaller && ffmpegInstaller.path) {
-          ffmpegPath = ffmpegInstaller.path;
-          const { stdout } = await execAsync(`${ffmpegPath} -version`);
-          return Response.json({
-            success: true,
-            message: 'FFmpeg is working via npm package!',
-            version: stdout.split('\n')[0],
-            path: ffmpegPath,
-          });
-        }
-        throw new Error('Package not installed');
+        // Note: @ffmpeg-installer/ffmpeg is optional and not currently installed
+        // This fallback is here for future use if needed
+        throw new Error('@ffmpeg-installer/ffmpeg package not installed');
       } catch (packageError) {
         return Response.json({
           success: false,
