@@ -1044,12 +1044,13 @@ export default function EditorView() {
                         />
                       </div>
 
-                      {/* Duration (Optional) */}
-                      <div>
-                        <label className="block text-xs font-medium text-white mb-1">
-                          Duration <span className="text-white/60 text-xs">(optional, up to 10 seconds)</span>
-                        </label>
-                        <div className="flex items-center gap-4">
+                      {/* Duration and Use Seed Frame - Side by Side */}
+                      <div className="flex items-start gap-8">
+                        {/* Duration (Optional) */}
+                        <div className="flex-1">
+                          <label className="block text-xs font-medium text-white mb-1">
+                            Duration <span className="text-white/60 text-xs">(optional, up to 10 seconds)</span>
+                          </label>
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
@@ -1066,19 +1067,24 @@ export default function EditorView() {
                             />
                             <span className="text-xs text-white/60">seconds</span>
                           </div>
+                        </div>
+                        
+                        {/* Use Seed Frame Toggle */}
+                        {currentSceneIndex > 0 && (() => {
+                          const previousScene = scenes[currentSceneIndex - 1];
+                          const selectedSeedFrameIndex = previousScene?.selectedSeedFrameIndex ?? 0;
+                          const seedFrame = previousScene?.seedFrames?.[selectedSeedFrameIndex];
+                          const seedFrameUrl = seedFrame?.url 
+                            ? (seedFrame.url.startsWith('http://') || seedFrame.url.startsWith('https://') || seedFrame.url.startsWith('/api')
+                                ? seedFrame.url
+                                : `/api/serve-image?path=${encodeURIComponent(seedFrame.localPath || seedFrame.url)}`)
+                            : null;
                           
-                          {/* Use Seed Frame Toggle */}
-                          {currentSceneIndex > 0 && (() => {
-                            const previousScene = scenes[currentSceneIndex - 1];
-                            const selectedSeedFrameIndex = previousScene?.selectedSeedFrameIndex ?? 0;
-                            const seedFrame = previousScene?.seedFrames?.[selectedSeedFrameIndex];
-                            const seedFrameUrl = seedFrame?.url 
-                              ? (seedFrame.url.startsWith('http://') || seedFrame.url.startsWith('https://') || seedFrame.url.startsWith('/api')
-                                  ? seedFrame.url
-                                  : `/api/serve-image?path=${encodeURIComponent(seedFrame.localPath || seedFrame.url)}`)
-                              : null;
-                            
-                            return (
+                          return (
+                            <div className="flex-1">
+                              <label className="block text-xs font-medium text-white mb-1">
+                                Use seed frame
+                              </label>
                               <div className="flex items-center gap-2">
                                 <label className="flex items-center gap-2 cursor-pointer">
                                   <input
@@ -1105,9 +1111,9 @@ export default function EditorView() {
                                   </div>
                                 )}
                               </div>
-                            );
-                          })()}
-                        </div>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Image Input (Optional) */}
@@ -1296,8 +1302,8 @@ export default function EditorView() {
               })}
             </div>
 
-            {/* Generate Video Button */}
-            {selectedImage && !isGeneratingImage && (
+            {/* Generate Video Button - Show as soon as one image is ready */}
+            {selectedImage && selectedImage.localPath && (
             <button
               onClick={handleGenerateVideo}
               disabled={isGeneratingVideo}
@@ -1311,7 +1317,11 @@ export default function EditorView() {
               ) : (
                 <>
                   <Video className="w-5 h-5" />
-                    Generate Video from Selected Image
+                  {isGeneratingImage ? (
+                    <>Generate Video from Selected Image (other images still generating...)</>
+                  ) : (
+                    <>Generate Video from Selected Image</>
+                  )}
                 </>
               )}
             </button>
