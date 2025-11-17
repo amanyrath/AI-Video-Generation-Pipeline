@@ -166,13 +166,13 @@ export async function POST(request: NextRequest) {
 
         console.log(`[Upload Images API] Successfully uploaded image ${i + 1}/${imageFiles.length}: ${uploadedImage.id}`);
 
-        // Process image through background removal (2 iterations) if enabled
+        // Process image through background removal (1 iteration) if enabled
         if (enableBackgroundRemoval) {
           try {
             console.log(`[Upload Images API] Starting background removal for image ${i + 1}...`);
             const processedPaths = await removeBackgroundIterative(
               uploadedImage.localPath,
-              2 // 2 iterations
+              1 // 1 iteration
             );
 
           // Create ProcessedImage objects for each iteration
@@ -222,16 +222,16 @@ export async function POST(request: NextRequest) {
             };
 
             processedVersions.push(processedImage);
-            console.log(`[Upload Images API] Created processed version ${iter + 1}/2 for image ${i + 1} (background removal)`);
+            console.log(`[Upload Images API] Created processed version ${iter + 1}/1 for image ${i + 1} (background removal)`);
           }
 
-            // Apply edge cleanup to the last background removal iteration if enabled
+            // Apply edge cleanup to the last background removal iteration (1 iteration only)
             // This helps remove edge artifacts that can cause visible pixels in generated images
-            if (edgeCleanupIterations > 0 && processedPaths.length > 0) {
+            if (processedPaths.length > 0) {
               try {
                 const lastBgRemovedPath = processedPaths[processedPaths.length - 1];
-                console.log(`[Upload Images API] Applying ${edgeCleanupIterations} edge cleanup iteration(s) to processed image...`);
-                const cleanedPaths = await cleanupImageEdgesIterative(lastBgRemovedPath, edgeCleanupIterations);
+                console.log(`[Upload Images API] Applying 1 edge cleanup iteration to processed image...`);
+                const cleanedPaths = await cleanupImageEdgesIterative(lastBgRemovedPath, 1);
                 
                 // Add all edge cleanup iterations as separate processed versions
                 // The last one will be the most refined
@@ -273,10 +273,10 @@ export async function POST(request: NextRequest) {
                   };
                   
                   processedVersions.push(edgeCleanedImage);
-                  console.log(`[Upload Images API] Created edge-cleaned version ${cleanupIter + 1}/${edgeCleanupIterations} for image ${i + 1}`);
+                  console.log(`[Upload Images API] Created edge-cleaned version ${cleanupIter + 1}/1 for image ${i + 1}`);
                 }
                 
-                console.log(`[Upload Images API] Edge cleanup completed for image ${i + 1} (${edgeCleanupIterations} iteration(s))`);
+                console.log(`[Upload Images API] Edge cleanup completed for image ${i + 1} (1 iteration)`);
               } catch (edgeError: any) {
                 const edgeErrorMessage = edgeError.message || 'Unknown error';
                 console.warn(`[Upload Images API] Edge cleanup failed for image ${i + 1}, using un-cleaned version: ${edgeErrorMessage}`);

@@ -115,25 +115,26 @@ export async function POST(request: NextRequest) {
     // Scenes 1-4: Use faster model (continuity already established via seed frames)
     let selectedModel = runtimeVideoModel;
     
-    // For Scene 0, ALWAYS override to use an image-to-video model (Gen-4 Aleph requires video input)
-    if (sceneIndex === 0) {
-      // Check if the selected model is Gen-4 Aleph (which requires video input)
-      if (selectedModel && selectedModel.includes('gen4-aleph')) {
-        console.log('[Video Generation API] Scene 0: Overriding Gen-4 Aleph to Gen-4 Turbo (Aleph requires video input, not image)');
-        selectedModel = 'runwayml/gen4-turbo';
-      } else if (!selectedModel) {
-        // No model selected, use Gen-4 Turbo for Scene 0
+    // Only apply overrides if no model was explicitly selected
+    if (!selectedModel) {
+      // For Scene 0, use Gen-4 Turbo for maximum consistency
+      if (sceneIndex === 0) {
         selectedModel = 'runwayml/gen4-turbo';
         console.log('[Video Generation API] Scene 0 → Scene 1: Using Gen-4 Turbo for maximum consistency (image-to-video)');
       } else {
-        // Model is selected and is not Gen-4 Aleph, use it
-        console.log(`[Video Generation API] Scene 0: Using selected model: ${selectedModel}`);
+        // Scenes 1-4: Use faster model (WAN 2.5) since continuity is already established
+        // Seed frames from previous scenes provide the continuity
+        selectedModel = 'wan-video/wan-2.5-i2v-fast:5be8b80ffe74f3d3a731693ddd98e7ee94100a0f4ae704bd58e93565977670f9';
+        console.log(`[Video Generation API] Scene ${sceneIndex}: Using WAN 2.5 for faster generation (continuity via seed frames)`);
       }
-    } else if (!selectedModel) {
-      // Scenes 1-4: Use faster model (WAN 2.5) since continuity is already established
-      // Seed frames from previous scenes provide the continuity
-      selectedModel = 'wan-video/wan-2.5-i2v-fast:5be8b80ffe74f3d3a731693ddd98e7ee94100a0f4ae704bd58e93565977670f9';
-      console.log(`[Video Generation API] Scene ${sceneIndex}: Using WAN 2.5 for faster generation (continuity via seed frames)`);
+    } else {
+      // Model was explicitly selected - only override Gen-4 Aleph for Scene 0 (it requires video input)
+      if (sceneIndex === 0 && selectedModel.includes('gen4-aleph')) {
+        console.log('[Video Generation API] Scene 0: Overriding Gen-4 Aleph to Gen-4 Turbo (Aleph requires video input, not image)');
+        selectedModel = 'runwayml/gen4-turbo';
+      } else {
+        console.log(`[Video Generation API] Scene ${sceneIndex}: Using selected model: ${selectedModel}`);
+      }
     }
 
     // Apply the selected model
