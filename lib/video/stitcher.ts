@@ -19,9 +19,9 @@ const execAsync = promisify(exec);
 
 const CONCAT_FILE_NAME = 'concat.txt';
 const OUTPUT_FILENAME = 'output.mp4';
-const DEFAULT_TRANSITION_DURATION = 0.5; // seconds
-const MIN_TRANSITION_DURATION = 0.3;
-const MAX_TRANSITION_DURATION = 0.8;
+const DEFAULT_TRANSITION_DURATION = 0.2; // seconds - reduced for more subtle transitions
+const MIN_TRANSITION_DURATION = 0.15; // reduced for more subtle transitions
+const MAX_TRANSITION_DURATION = 0.3; // reduced for more subtle transitions
 
 // Transition thresholds based on similarity (0-1 scale)
 const HIGH_SIMILARITY_THRESHOLD = 0.8; // Use subtle fade
@@ -454,10 +454,11 @@ function buildTransitionFilter(
     }
   }
   
-  // Combine fade filters with the original video processing
+  // Step 3: Add fade filters to the filter complex (must be before concat)
+  // The fade filters create the labels that concat will use
   filters.push(...fadeFilters);
   
-  // Step 3: Concatenate all videos
+  // Step 4: Concatenate all videos
   const concatInputs = concatVideoLabels.length;
   
   // Validate that we have the right number of audio streams if audio is enabled
@@ -470,9 +471,20 @@ function buildTransitionFilter(
     );
   }
   
-  // Concat filter syntax: [v0][v1][v2][a0][a1][a2]concat=n=3:v=1:a=1[vout][aout]
-  // Important: ALL video inputs first, then ALL audio inputs
-  const concatInputString = concatVideoLabels.join('') + (anyHasAudio ? concatAudioLabels.join('') : '');
+  // Concat filter syntax for v=1:a=1: inputs must be interleaved (video, audio, video, audio, ...)
+  // NOT all videos then all audio!
+  // Format: [v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[vout][aout]
+  let concatInputString = '';
+  if (anyHasAudio) {
+    // Interleave video and audio inputs
+    for (let i = 0; i < concatInputs; i++) {
+      concatInputString += concatVideoLabels[i] + concatAudioLabels[i];
+    }
+  } else {
+    // No audio, just video inputs
+    concatInputString = concatVideoLabels.join('');
+  }
+  
   const concatFilter = `concat=n=${concatInputs}:v=1${anyHasAudio ? ':a=1' : ''}`;
   const concatOutput = `[vout]${anyHasAudio ? '[aout]' : ''}`;
   
@@ -482,7 +494,7 @@ function buildTransitionFilter(
   console.log(`[VideoStitcher] Using concat method with ${concatInputs} videos`);
   console.log(`[VideoStitcher] Concat filter: ${concatFilterString.substring(0, 300)}...`);
 
-  // Step 4: Return the final labels for mapping
+  // Step 5: Return the final labels for mapping
   return {
     filterComplex: filters.join(';'),
     videoOutputLabel: 'vout',
