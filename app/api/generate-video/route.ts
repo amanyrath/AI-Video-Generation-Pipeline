@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { imageUrl, prompt, seedFrame, sceneIndex, projectId } = body;
+    const { imageUrl, prompt, seedFrame, sceneIndex, projectId, duration } = body;
 
     // Validate required fields
     if (!imageUrl || typeof imageUrl !== 'string') {
@@ -156,11 +156,25 @@ export async function POST(request: NextRequest) {
     console.log('[Video Generation API]   - Seed Frame:', seedFrameUrl || 'none');
     console.log('[Video Generation API] ========================================');
 
+    // Validate and use duration if provided (will be rounded up to model-acceptable values)
+    let videoDuration: number | undefined;
+    if (duration !== undefined) {
+      if (typeof duration !== 'number' || duration < 1 || duration > 30) {
+        return NextResponse.json(
+          { success: false, error: 'duration must be a number between 1 and 30 seconds' },
+          { status: 400 }
+        );
+      }
+      videoDuration = duration;
+      console.log('[Video Generation API] Using scene-specific duration:', videoDuration, 'seconds');
+    }
+
     // Create video prediction (returns prediction ID for polling)
     const predictionId = await createVideoPredictionWithRetry(
       imageUrl,
       prompt,
-      seedFrameUrl
+      seedFrameUrl,
+      videoDuration
     );
 
     return NextResponse.json({

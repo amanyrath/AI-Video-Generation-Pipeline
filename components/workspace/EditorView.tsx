@@ -410,13 +410,17 @@ export default function EditorView() {
         }
       }
 
+      // Get scene duration (customDuration takes precedence over suggestedDuration)
+      const sceneDuration = currentScene.customDuration || currentScene.suggestedDuration;
+      
       // Generate video
       const videoResponse = await generateVideo(
         s3Url,
         currentScene.imagePrompt,
         project.id,
         currentSceneIndex,
-        seedFrameUrl // Pass seed frame for scenes 1-4
+        seedFrameUrl, // Pass seed frame for scenes 1-4
+        sceneDuration // Pass scene-specific duration (will be rounded up to model-acceptable values)
       );
 
       // Poll for video completion (pass projectId and sceneIndex to trigger download)
@@ -430,6 +434,7 @@ export default function EditorView() {
       });
 
       if (videoStatus.status === 'succeeded' && videoStatus.videoPath) {
+        // Set the video path for the current scene
         setVideoPath(currentSceneIndex, videoStatus.videoPath);
         setSceneStatus(currentSceneIndex, 'video_ready');
 
@@ -443,18 +448,56 @@ export default function EditorView() {
         if (currentSceneIndex < 4) {
           setIsExtractingFrames(true);
           try {
-            // Check if video path is a URL (Replicate URL) or local path
+            // IMPORTANT: Use the video path from videoStatus (which we just received)
+            // and verify it's for the correct scene index
             let videoPath = videoStatus.videoPath;
+            
+            // Verify the video path matches the current scene index
+            // Video files are named like: scene-{sceneIndex}-{timestamp}.mp4
+            const sceneIndexInPath = videoPath.match(/scene-(\d+)-/);
+            if (sceneIndexInPath) {
+              const pathSceneIndex = parseInt(sceneIndexInPath[1]);
+              if (pathSceneIndex !== currentSceneIndex) {
+                console.error(`[EditorView] CRITICAL: Video path scene index mismatch!`);
+                console.error(`[EditorView] Expected scene ${currentSceneIndex}, but video path contains scene ${pathSceneIndex}`);
+                console.error(`[EditorView] Video path: ${videoPath}`);
+                console.error(`[EditorView] This will cause seed frames to be extracted from the wrong scene!`);
+                // Try to get the correct video path from scene state (might be updated by now)
+                const currentSceneState = scenes[currentSceneIndex];
+                if (currentSceneState?.videoLocalPath) {
+                  const correctPathSceneIndex = currentSceneState.videoLocalPath.match(/scene-(\d+)-/);
+                  if (correctPathSceneIndex && parseInt(correctPathSceneIndex[1]) === currentSceneIndex) {
+                    console.log(`[EditorView] Using corrected video path from scene state: ${currentSceneState.videoLocalPath}`);
+                    videoPath = currentSceneState.videoLocalPath;
+                  } else {
+                    throw new Error(`Cannot extract seed frames: Video path is for scene ${pathSceneIndex}, but we need scene ${currentSceneIndex}`);
+                  }
+                } else {
+                  throw new Error(`Cannot extract seed frames: Video path is for scene ${pathSceneIndex}, but we need scene ${currentSceneIndex}`);
+                }
+              } else {
+                console.log(`[EditorView] ✓ Verified: Video path matches current scene ${currentSceneIndex + 1}`);
+              }
+            } else {
+              console.warn(`[EditorView] Could not verify scene index in video path: ${videoPath}`);
+              console.warn(`[EditorView] Proceeding with extraction, but path format may be unexpected`);
+            }
+            
+            console.log(`[EditorView] Extracting seed frames from Scene ${currentSceneIndex + 1} video: ${videoPath}`);
+            console.log(`[EditorView] Calling extractFrames with sceneIndex=${currentSceneIndex} (Scene ${currentSceneIndex + 1})`);
 
             // If it's a URL, we can't extract frames from it directly
             if (videoPath.startsWith('http://') || videoPath.startsWith('https://')) {
               console.warn('Video path is a URL, cannot extract frames. Expected local path.');
             } else {
+              // Double-check the video file exists and matches the scene
+              console.log(`[EditorView] Verifying video file exists and is for correct scene...`);
               const response = await extractFrames(
                 videoPath,
                 project.id,
                 currentSceneIndex
               );
+              console.log(`[EditorView] ✓ extractFrames completed for Scene ${currentSceneIndex + 1}, got ${response.frames?.length || 0} frames`);
 
               if (response.frames && response.frames.length > 0) {
                 // Upload seed frames to S3 so they can be used for video generation

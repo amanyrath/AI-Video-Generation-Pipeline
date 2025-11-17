@@ -95,12 +95,15 @@ async function extractFramesWithFFmpeg(
     const framePath = path.join(outputDir, `frame_${i + 1}.png`);
     
     // Extract single frame at specific timestamp
-    // -ss: seek to specific time (use input seeking for accuracy)
+    // Use output seeking (-ss after -i) for more accurate frame extraction
+    // Input seeking (-ss before -i) is faster but less accurate
+    // Output seeking is slower but ensures we get the exact frame at the timestamp
     // -i: input file
+    // -ss: seek to specific time (output seeking for accuracy)
     // -vframes 1: extract only 1 frame
     // -q:v: quality (2 = high quality)
     // -y: overwrite output file
-    const command = `ffmpeg -ss ${absoluteTimestamp} -i "${videoPath}" -vframes 1 -q:v ${FRAME_QUALITY} -y "${framePath}"`;
+    const command = `ffmpeg -i "${videoPath}" -ss ${absoluteTimestamp} -vframes 1 -q:v ${FRAME_QUALITY} -y "${framePath}"`;
 
     try {
       await execAsync(command);
@@ -178,6 +181,28 @@ export async function extractFrames(
   // Extract frames at specific timestamps (relative to end of video)
   // FRAME_TIMESTAMPS are relative to the end: [0.1, 0.2, 0.3, 0.4, 0.5]
   // This means: 0.1s before end, 0.2s before end, etc.
+  console.log(`[FrameExtractor] Extracting frames from video: ${videoPath}`);
+  console.log(`[FrameExtractor] Video duration: ${videoInfo.duration}s`);
+  console.log(`[FrameExtractor] Scene index: ${sceneIndex}`);
+  console.log(`[FrameExtractor] Frame timestamps (relative to end): ${FRAME_TIMESTAMPS.join(', ')}s`);
+  
+  // Calculate and log absolute timestamps for verification
+  const absoluteTimestamps = FRAME_TIMESTAMPS.map(ts => Math.max(0, videoInfo.duration - ts));
+  console.log(`[FrameExtractor] Absolute timestamps: ${absoluteTimestamps.map(ts => ts.toFixed(2)).join(', ')}s`);
+  
+  // Verify all timestamps are within video duration
+  const invalidTimestamps = absoluteTimestamps.filter(ts => ts >= videoInfo.duration);
+  if (invalidTimestamps.length > 0) {
+    throw new Error(`Cannot extract frames: Some timestamps (${invalidTimestamps.join(', ')}) are beyond video duration (${videoInfo.duration}s)`);
+  }
+  
+  // Verify we're extracting from the last 0.5 seconds
+  const earliestTimestamp = Math.min(...absoluteTimestamps);
+  const expectedEarliest = Math.max(0, videoInfo.duration - FRAME_DURATION);
+  if (Math.abs(earliestTimestamp - expectedEarliest) > 0.1) {
+    console.warn(`[FrameExtractor] Warning: Earliest timestamp (${earliestTimestamp.toFixed(2)}s) doesn't match expected (${expectedEarliest.toFixed(2)}s) for last ${FRAME_DURATION}s`);
+  }
+  
   let framePaths: string[] = [];
   let lastError: Error | null = null;
 
@@ -189,6 +214,7 @@ export async function extractFrames(
         videoInfo.duration,
         FRAME_TIMESTAMPS
       );
+      console.log(`[FrameExtractor] Successfully extracted ${framePaths.length} frames`);
       break; // Success
     } catch (error: any) {
       lastError = error;

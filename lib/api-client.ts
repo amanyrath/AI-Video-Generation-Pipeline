@@ -372,7 +372,8 @@ export async function generateVideo(
   prompt: string,
   projectId: string,
   sceneIndex: number,
-  seedFrame?: string
+  seedFrame?: string,
+  duration?: number // Optional: Scene-specific duration
 ): Promise<{ predictionId: string; status: string }> {
   return retryRequest(async () => {
     const response = await fetch(`${API_BASE_URL}/api/generate-video`, {
@@ -387,6 +388,7 @@ export async function generateVideo(
         projectId,
         sceneIndex,
         seedFrame,
+        duration, // Pass duration if provided
       }),
     });
 

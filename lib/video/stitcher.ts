@@ -37,6 +37,7 @@ interface VideoInfo {
   codec: string;
   width: number;
   height: number;
+  hasAudio: boolean; // Whether the video has an audio stream
 }
 
 // Valid FFmpeg xfade transition types
@@ -59,22 +60,36 @@ interface TransitionOffset {
 // ============================================================================
 
 /**
- * Get video codec and resolution information
+ * Get video codec and resolution information, including audio stream detection
  */
 async function getVideoInfo(videoPath: string): Promise<VideoInfo> {
   try {
-    const command = `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height:format=duration -of json "${videoPath}"`;
-    const { stdout } = await execAsync(command);
-    const info = JSON.parse(stdout);
+    // Get video stream info
+    const videoCommand = `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height:format=duration -of json "${videoPath}"`;
+    const { stdout: videoStdout } = await execAsync(videoCommand);
+    const videoInfo = JSON.parse(videoStdout);
 
-    const stream = info.streams?.[0] || {};
-    const format = info.format || {};
+    const stream = videoInfo.streams?.[0] || {};
+    const format = videoInfo.format || {};
+
+    // Check if audio stream exists
+    let hasAudio = false;
+    try {
+      const audioCommand = `ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of json "${videoPath}"`;
+      const { stdout: audioStdout } = await execAsync(audioCommand);
+      const audioInfo = JSON.parse(audioStdout);
+      hasAudio = !!(audioInfo.streams && audioInfo.streams.length > 0);
+    } catch {
+      // No audio stream found, which is fine
+      hasAudio = false;
+    }
 
     return {
       codec: stream.codec_name || 'unknown',
       width: parseInt(stream.width || '0', 10),
       height: parseInt(stream.height || '0', 10),
       duration: parseFloat(format.duration || '0'),
+      hasAudio,
     };
   } catch (error: any) {
     throw new Error(`Failed to get video info for ${videoPath}: ${error.message}`);
@@ -303,9 +318,11 @@ function buildTransitionFilter(
   videoCount: number,
   videoDurations: number[],
   transitions: TransitionConfig[],
-  offsets: TransitionOffset[]
-): { filterComplex: string; videoOutputLabel: string; audioOutputLabel: string } {
+  offsets: TransitionOffset[],
+  hasAudioStreams: boolean[] // Array indicating which videos have audio
+): { filterComplex: string; videoOutputLabel: string; audioOutputLabel: string | null } {
   const filters: string[] = [];
+  const anyHasAudio = hasAudioStreams.some(has => has);
 
   // Step 1: Trim each video to the correct segments and normalize
   // Normalize frame rate to 30fps with motion interpolation for smooth playback
@@ -314,6 +331,7 @@ function buildTransitionFilter(
     const offset = offsets[i];
     const trimStart = offset.startOffset;
     const trimEnd = offset.endOffset;
+    const hasAudio = hasAudioStreams[i];
 
     // Trim video, use minterpolate for smooth frame interpolation, normalize frame rate to 30fps
     // minterpolate creates intermediate frames for smoother motion, reducing stuttering
@@ -327,13 +345,24 @@ function buildTransitionFilter(
     filters.push(
       `[${i}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS,minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1:scd=none,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v${i}]`
     );
-    // Trim audio and normalize sample rate with better sync
-    filters.push(`[${i}:a]atrim=start=${trimStart}:end=${trimEnd},asetpts=PTS-STARTPTS,aresample=44100:async=1[a${i}]`);
+    
+    // Only process audio if this video has an audio stream
+    // If no videos have audio, we skip audio processing entirely
+    if (anyHasAudio) {
+      if (hasAudio) {
+        // Trim audio and normalize sample rate with better sync
+        filters.push(`[${i}:a]atrim=start=${trimStart}:end=${trimEnd},asetpts=PTS-STARTPTS,aresample=44100:async=1[a${i}]`);
+      } else {
+        // Generate silent audio track for videos without audio (to match videos with audio)
+        const trimmedDuration = trimEnd - trimStart;
+        filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:${trimmedDuration},asetpts=PTS-STARTPTS[a${i}]`);
+      }
+    }
   }
 
   // Step 2: Apply transitions between consecutive videos
   let currentVideoLabel = 'v0';
-  let currentAudioLabel = 'a0';
+  let currentAudioLabel: string | null = anyHasAudio ? 'a0' : null;
   let videoLabelCounter = videoCount;
   let audioLabelCounter = videoCount;
 
@@ -341,7 +370,7 @@ function buildTransitionFilter(
     const transition = transitions[i];
     const offset = offsets[i];
     const nextVideoLabel = `v${i + 1}`;
-    const nextAudioLabel = `a${i + 1}`;
+    const nextAudioLabel = anyHasAudio ? `a${i + 1}` : null;
     
     // Calculate transition offset: when the transition should start in the final timeline
     // This is the end of the current trimmed video minus transition duration
@@ -363,12 +392,14 @@ function buildTransitionFilter(
       currentVideoLabel = newVideoLabel;
     }
 
-    // Apply audio crossfade
-    const newAudioLabel = `a${audioLabelCounter++}`;
-    filters.push(
-      `[${currentAudioLabel}][${nextAudioLabel}]acrossfade=d=${transition.duration}[${newAudioLabel}]`
-    );
-    currentAudioLabel = newAudioLabel;
+    // Apply audio crossfade only if we have audio streams
+    if (anyHasAudio && currentAudioLabel && nextAudioLabel) {
+      const newAudioLabel = `a${audioLabelCounter++}`;
+      filters.push(
+        `[${currentAudioLabel}][${nextAudioLabel}]acrossfade=d=${transition.duration}[${newAudioLabel}]`
+      );
+      currentAudioLabel = newAudioLabel;
+    }
   }
 
   // Step 3: Return the final labels for mapping
@@ -388,7 +419,8 @@ async function stitchVideosWithTransitions(
   videoPaths: string[],
   outputPath: string,
   transitions: TransitionConfig[],
-  videoDurations: number[]
+  videoDurations: number[],
+  hasAudioStreams: boolean[]
 ): Promise<void> {
   try {
     // Calculate transition offsets
@@ -399,7 +431,8 @@ async function stitchVideosWithTransitions(
       videoPaths.length,
       videoDurations,
       transitions,
-      offsets
+      offsets,
+      hasAudioStreams
     );
 
     // Build input arguments - escape paths properly
@@ -412,11 +445,15 @@ async function stitchVideosWithTransitions(
 
     // FFmpeg command with filter_complex
     // Use -shortest to handle videos with different durations
-    // Use -vsync cfr (constant frame rate) to prevent stuttering
-    // Use -async 1 to sync audio properly
+    // Use -fps_mode cfr (constant frame rate) to prevent stuttering (replaces deprecated -vsync)
+    // Use -async 1 to sync audio properly (only if we have audio)
     // Use -r 30 to ensure output is exactly 30fps
     // Map the final output labels from the filter chain
-    const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" -map "[${videoOutputLabel}]" -map "[${audioOutputLabel}]" -c:v libx264 -preset medium -crf 23 -r 30 -vsync cfr -c:a aac -b:a 192k -shortest -async 1 -y "${outputPath}"`;
+    const mapArgs = audioOutputLabel 
+      ? `-map "[${videoOutputLabel}]" -map "[${audioOutputLabel}]" -c:a aac -b:a 192k -async 1`
+      : `-map "[${videoOutputLabel}]" -an`; // -an means no audio
+    
+    const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" ${mapArgs} -c:v libx264 -preset medium -crf 23 -r 30 -fps_mode cfr -shortest -y "${outputPath}"`;
 
     console.log(`[VideoStitcher] Stitching ${videoPaths.length} videos with transitions...`);
     console.log(`[VideoStitcher] Filter complex: ${filterComplex.substring(0, 200)}...`);
@@ -469,12 +506,15 @@ export async function stitchVideos(
   await fs.mkdir(tempDir, { recursive: true });
 
   try {
-    // Get video durations
+    // Get video info (including durations and audio stream detection)
     console.log('[VideoStitcher] Analyzing videos...');
     const videoInfos = await Promise.all(
       videoPaths.map((vp) => getVideoInfo(vp))
     );
     const videoDurations = videoInfos.map((info) => info.duration);
+    const hasAudioStreams = videoInfos.map((info) => info.hasAudio);
+    
+    console.log(`[VideoStitcher] Audio streams detected: ${hasAudioStreams.filter(h => h).length}/${videoPaths.length} videos have audio`);
 
     // Handle single video case (no transitions needed)
     if (videoPaths.length === 1) {
@@ -509,7 +549,8 @@ export async function stitchVideos(
         videoPaths,
         outputPath,
         transitions,
-        videoDurations
+        videoDurations,
+        hasAudioStreams
       );
     }
 
