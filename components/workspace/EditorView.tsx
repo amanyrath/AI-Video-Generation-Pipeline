@@ -289,6 +289,7 @@ export default function EditorView() {
               };
               return updated;
             });
+            return { success: true, index };
           } else {
             throw new Error(statusResponse.error || 'Image generation failed');
           }
@@ -302,11 +303,31 @@ export default function EditorView() {
             };
             return updated;
           });
+          return { success: false, index, error: error instanceof Error ? error.message : 'Unknown error' };
         }
       });
 
-      await Promise.all(imagePromises);
-      setSceneStatus(currentSceneIndex, 'image_ready');
+      const results = await Promise.all(imagePromises);
+      const successCount = results.filter(r => r.success).length;
+      
+      if (successCount > 0) {
+        // At least one image succeeded
+        setSceneStatus(currentSceneIndex, 'image_ready');
+      } else {
+        // All images failed - show error and reset status
+        const errorMessages = results
+          .filter(r => !r.success && r.error)
+          .map(r => r.error)
+          .filter((msg, idx, arr) => arr.indexOf(msg) === idx); // Unique errors
+        
+        const errorMessage = errorMessages.length > 0 
+          ? `All image generations failed. ${errorMessages[0]}`
+          : 'All image generations failed. Please try again.';
+        
+        console.error('[EditorView] All image generations failed:', errorMessages);
+        alert(errorMessage);
+        setSceneStatus(currentSceneIndex, 'pending');
+      }
     } catch (error) {
       console.error('Error generating images:', error);
     } finally {
@@ -331,33 +352,32 @@ export default function EditorView() {
     try {
       setSceneStatus(currentSceneIndex, 'generating_video');
 
-      // For Scene 0: Use reference image directly (if available) for maximum consistency
+      // For Scene 0: Use generated scene image (with vehicle in context) instead of character reference
+      // This prevents the fade from character image to scene - video starts directly in the scene
       // For Scenes 1-4: Use selected generated image
       let imageToUse: string | undefined;
       
       if (currentSceneIndex === 0) {
-        // Scene 0: Use reference image directly for video generation
-        // This ensures the video looks like the input reference image
-        const referenceImageUrls = project.referenceImageUrls || [];
-        if (referenceImageUrls.length > 0) {
-          // Use the reference image (should be cleaned/background-removed)
-          // Reference image might be a URL or local path - handle both
-          const refImage = referenceImageUrls[0];
-          if (refImage.startsWith('http://') || refImage.startsWith('https://')) {
-            // Already a URL, use it directly
-            imageToUse = refImage;
-            console.log('[EditorView] Scene 0: Using reference image URL directly for video generation');
-          } else {
-            // Local path, will be uploaded to S3
-            imageToUse = refImage;
-            console.log('[EditorView] Scene 0: Using reference image (local path) for video generation - will upload to S3');
-          }
-        } else if (selectedImage) {
-          // Fallback to generated image if no reference image
+        // Scene 0: Prioritize generated scene image (which includes vehicle in scene context)
+        // This ensures the video starts directly in the scene without fading from character image
+        if (selectedImage) {
           imageToUse = selectedImage.localPath;
-          console.warn('[EditorView] Scene 0: No reference image available, using generated image as fallback');
+          console.log('[EditorView] Scene 0: Using generated scene image (with vehicle in context) for video generation');
         } else {
-          throw new Error('No image available for video generation. Please upload a reference image or generate an image first.');
+          // Fallback to reference image if no generated scene image available
+          const referenceImageUrls = project.referenceImageUrls || [];
+          if (referenceImageUrls.length > 0) {
+            const refImage = referenceImageUrls[0];
+            if (refImage.startsWith('http://') || refImage.startsWith('https://')) {
+              imageToUse = refImage;
+              console.log('[EditorView] Scene 0: No generated image available, using reference image URL as fallback');
+            } else {
+              imageToUse = refImage;
+              console.log('[EditorView] Scene 0: No generated image available, using reference image (local path) as fallback');
+            }
+          } else {
+            throw new Error('No image available for video generation. Please generate a scene image first.');
+          }
         }
       } else {
         // Scenes 1-4: Use selected generated image

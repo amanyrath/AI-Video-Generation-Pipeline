@@ -32,6 +32,7 @@ export default function CharacterValidationScreen() {
     hasUploadedImages,
     setUploadedImageUrls,
     setCharacterDescription,
+    setViewMode,
   } = useProjectStore();
 
   const [characterImages, setCharacterImages] = useState<CharacterImage[]>([]);
@@ -86,8 +87,10 @@ export default function CharacterValidationScreen() {
     }
     
     console.log(`[CharacterValidation] Skipping to workspace with project ID: ${finalProjectId}`);
+    // Set view mode to storyboard before navigating
+    setViewMode('storyboard');
     router.push(`/workspace?projectId=${finalProjectId}`);
-  }, [router, project?.id]);
+  }, [router, project?.id, setViewMode]);
 
   const processUploadedImages = useCallback(async () => {
     if (!project?.uploadedImageUrls) return;
@@ -620,6 +623,9 @@ export default function CharacterValidationScreen() {
 
     // Wait a moment to ensure store is updated, then navigate
     await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Set view mode to storyboard before navigating
+    setViewMode('storyboard');
 
     // Navigate to workspace with project ID
     router.push(`/workspace?projectId=${finalProjectId}`);
