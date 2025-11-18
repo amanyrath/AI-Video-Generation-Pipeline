@@ -27,6 +27,7 @@ export default function MediaDrawer() {
     setCurrentSceneIndex,
     setViewMode,
     selectImage,
+    selectVideo,
   } = useProjectStore();
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     characterRefs: true,
@@ -125,22 +126,42 @@ export default function MediaDrawer() {
   const generatedVideos = useMemo(() => {
     const allVideos: MediaItem[] = [];
     scenes.forEach((scene, sceneIndex) => {
-      if (scene.videoLocalPath) {
-        // Convert absolute file path to serveable URL
-        // If it's already a URL (starts with http or /api), use it as-is
-        // Otherwise, convert local path to serveable URL
+      // Show all generated videos (old and new)
+      if (scene.generatedVideos && scene.generatedVideos.length > 0) {
+        scene.generatedVideos.forEach((video) => {
+          allVideos.push({
+            id: video.id,
+            type: 'video' as const,
+            url: video.url,
+            sceneIndex,
+            timestamp: video.timestamp,
+            metadata: {
+              isSelected: scene.selectedVideoId === video.id,
+              localPath: video.localPath,
+              actualDuration: video.actualDuration,
+              prompt: video.prompt,
+            },
+          });
+        });
+      } else if (scene.videoLocalPath) {
+        // Backward compatibility: if no generatedVideos array but videoLocalPath exists
+        // Create a GeneratedVideo object from the old format
         let videoUrl = scene.videoLocalPath;
         if (!videoUrl.startsWith('http') && !videoUrl.startsWith('/api')) {
-          // Convert absolute path to serveable URL
           videoUrl = `/api/serve-video?path=${encodeURIComponent(scene.videoLocalPath)}`;
         }
         
         allVideos.push({
-          id: `video-${sceneIndex}`,
+          id: `video-${sceneIndex}-legacy`,
           type: 'video' as const,
           url: videoUrl,
           sceneIndex,
           timestamp: new Date().toISOString(),
+          metadata: {
+            isSelected: true, // Legacy videos are always selected
+            localPath: scene.videoLocalPath,
+            actualDuration: scene.actualDuration,
+          },
         });
       }
     });
@@ -308,7 +329,18 @@ export default function MediaDrawer() {
       if (item.type === 'image') {
         selectImage(item.sceneIndex, item.id);
       }
-      // Videos are already displayed in the editor view when switching to that scene
+      
+      // If it's a video, toggle selection (deselect if already selected)
+      if (item.type === 'video' && item.sceneIndex !== undefined) {
+        const scene = scenes[item.sceneIndex];
+        if (scene?.selectedVideoId === item.id) {
+          // Deselect if clicking the already selected video
+          selectVideo(item.sceneIndex, '');
+        } else {
+          // Select the video
+          selectVideo(item.sceneIndex, item.id);
+        }
+      }
     }
   };
 
@@ -405,7 +437,7 @@ export default function MediaDrawer() {
             className="w-full h-full object-cover aspect-video"
             muted
             playsInline
-            preload="none"
+            preload="metadata"
             onMouseEnter={(e) => {
               // Add delay before playing to prevent accidental loads
               const video = e.currentTarget;
@@ -494,8 +526,11 @@ export default function MediaDrawer() {
         )}
 
         {/* Selected Indicator */}
-        {isSelected && (
-          <div className="absolute top-2 right-2 w-5 h-5 bg-white/40 rounded-full flex items-center justify-center border border-white/20">
+        {/* For videos, only show blue dot if it's the selected video for the scene (not media drawer multi-select) */}
+        {/* For images/frames, show if selected in media drawer OR if it's the selected image for the scene */}
+        {((item.type === 'video' && item.metadata?.isSelected) || 
+          ((item.type === 'image' || item.type === 'frame') && (isSelected || item.metadata?.isSelected))) && (
+          <div className="absolute top-2 right-2 w-5 h-5 bg-blue-500/80 rounded-full flex items-center justify-center border-2 border-white/40 shadow-lg">
             <div className="w-2 h-2 bg-white rounded-full" />
           </div>
         )}

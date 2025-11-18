@@ -111,15 +111,31 @@ export interface SceneWithState extends Scene {
   selectedImageId?: string;
   
   // Video generation state
-  videoLocalPath?: string;
-  videoS3Key?: string;
-  actualDuration?: number;
+  generatedVideos?: GeneratedVideo[];  // Array of all generated videos (old and new)
+  selectedVideoId?: string;             // ID of currently selected video
+  videoLocalPath?: string;              // Deprecated: Use selectedVideoId instead (kept for backward compatibility)
+  videoS3Key?: string;                  // Deprecated: Use selectedVideoId instead (kept for backward compatibility)
+  actualDuration?: number;              // Deprecated: Use selectedVideoId instead (kept for backward compatibility)
   
   // Seed frames for NEXT scene (not present in Scene 4)
   seedFrames?: SeedFrame[];
   selectedSeedFrameIndex?: number;
   
   status: 'pending' | 'generating_image' | 'image_ready' | 'generating_video' | 'video_ready' | 'completed';
+}
+
+// ============================================================================
+// Generated Video Types
+// ============================================================================
+
+export interface GeneratedVideo {
+  id: string;
+  url: string;              // S3 URL or public HTTP/HTTPS URL
+  localPath: string;        // Local file path
+  s3Key?: string;           // Optional: S3 key if uploaded
+  actualDuration?: number;   // Optional: Actual duration in seconds
+  timestamp: string;        // ISO timestamp when generated
+  prompt?: string;           // Optional: Prompt used for generation
 }
 
 // ============================================================================

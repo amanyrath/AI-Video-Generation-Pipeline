@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import { ProjectState, Scene, SceneWithState, GeneratedImage, SeedFrame } from '@/lib/types';
+import { ProjectState, Scene, SceneWithState, GeneratedImage, GeneratedVideo, SeedFrame } from '@/lib/types';
 import { ViewMode, MediaDrawerState, DragDropState, ChatMessage } from '@/lib/types/components';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -58,6 +58,8 @@ interface ProjectStore {
   addGeneratedImage: (sceneIndex: number, image: GeneratedImage) => void;
   selectImage: (sceneIndex: number, imageId: string) => void;
   setVideoPath: (sceneIndex: number, videoPath: string, actualDuration?: number) => void;
+  addGeneratedVideo: (sceneIndex: number, video: GeneratedVideo) => void;
+  selectVideo: (sceneIndex: number, videoId: string) => void;
   setSeedFrames: (sceneIndex: number, frames: SeedFrame[]) => void;
   selectSeedFrame: (sceneIndex: number, frameIndex: number) => void;
   setFinalVideo: (url: string, s3Key?: string) => void;
@@ -283,12 +285,83 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     set((state) => {
       const updatedScenes = [...state.scenes];
       if (updatedScenes[sceneIndex]) {
+        // Create a GeneratedVideo object for the new video
+        const videoId = uuidv4();
+        const newVideo: GeneratedVideo = {
+          id: videoId,
+          url: videoPath.startsWith('http://') || videoPath.startsWith('https://') 
+            ? videoPath 
+            : `/api/serve-video?path=${encodeURIComponent(videoPath)}`,
+          localPath: videoPath,
+          actualDuration,
+          timestamp: new Date().toISOString(),
+        };
+        
+        // Add to generatedVideos array (or create array if it doesn't exist)
+        const existingVideos = updatedScenes[sceneIndex].generatedVideos || [];
+        
         updatedScenes[sceneIndex] = {
           ...updatedScenes[sceneIndex],
+          generatedVideos: [...existingVideos, newVideo],
+          selectedVideoId: videoId, // Auto-select the newly generated video
+          // Keep backward compatibility
           videoLocalPath: videoPath,
           actualDuration,
           status: 'video_ready',
         };
+      }
+      return { scenes: updatedScenes };
+    });
+  },
+  
+  addGeneratedVideo: (sceneIndex: number, video: GeneratedVideo) => {
+    set((state) => {
+      const updatedScenes = [...state.scenes];
+      if (updatedScenes[sceneIndex]) {
+        const existingVideos = updatedScenes[sceneIndex].generatedVideos || [];
+        updatedScenes[sceneIndex] = {
+          ...updatedScenes[sceneIndex],
+          generatedVideos: [...existingVideos, video],
+          // Auto-select if no video is currently selected
+          selectedVideoId: updatedScenes[sceneIndex].selectedVideoId || video.id,
+          // Update backward compatibility fields if this is the selected video
+          ...(updatedScenes[sceneIndex].selectedVideoId === video.id || !updatedScenes[sceneIndex].selectedVideoId ? {
+            videoLocalPath: video.localPath,
+            actualDuration: video.actualDuration,
+          } : {}),
+        };
+      }
+      return { scenes: updatedScenes };
+    });
+  },
+  
+  selectVideo: (sceneIndex: number, videoId: string) => {
+    set((state) => {
+      const updatedScenes = [...state.scenes];
+      if (updatedScenes[sceneIndex]) {
+        // If videoId is empty string, deselect
+        if (!videoId) {
+          updatedScenes[sceneIndex] = {
+            ...updatedScenes[sceneIndex],
+            selectedVideoId: undefined,
+            // Keep backward compatibility but clear it
+            videoLocalPath: undefined,
+            actualDuration: undefined,
+            videoS3Key: undefined,
+          };
+        } else {
+          const video = updatedScenes[sceneIndex].generatedVideos?.find(v => v.id === videoId);
+          if (video) {
+            updatedScenes[sceneIndex] = {
+              ...updatedScenes[sceneIndex],
+              selectedVideoId: videoId,
+              // Update backward compatibility fields
+              videoLocalPath: video.localPath,
+              actualDuration: video.actualDuration,
+              videoS3Key: video.s3Key,
+            };
+          }
+        }
       }
       return { scenes: updatedScenes };
     });
@@ -556,7 +629,14 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     
     const { stitchVideos } = await import('@/lib/api-client');
     const videoPaths = state.scenes
-      .map(s => s.videoLocalPath)
+      .map(s => {
+        // Use selected video if available, otherwise fallback to videoLocalPath for backward compatibility
+        if (s.selectedVideoId && s.generatedVideos) {
+          const selectedVideo = s.generatedVideos.find(v => v.id === s.selectedVideoId);
+          return selectedVideo?.localPath;
+        }
+        return s.videoLocalPath;
+      })
       .filter((path): path is string => !!path);
     
     if (videoPaths.length === 0) throw new Error('No videos available');

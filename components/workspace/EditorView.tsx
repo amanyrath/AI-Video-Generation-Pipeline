@@ -108,7 +108,26 @@ export default function EditorView() {
   const sceneImages = sceneState?.generatedImages || [];
   const sceneHasImage = sceneImages.length > 0;
   const selectedImage = sceneImages.find(img => img.id === (selectedImageId || sceneState?.selectedImageId));
-  const sceneHasVideo = !!sceneState?.videoLocalPath;
+  // Get selected video (prefer selectedVideoId, fallback to videoLocalPath for backward compatibility)
+  const selectedVideo = sceneState?.generatedVideos?.find(v => v.id === sceneState.selectedVideoId) 
+    || (sceneState?.videoLocalPath ? {
+      id: 'legacy',
+      url: sceneState.videoLocalPath.startsWith('http://') || sceneState.videoLocalPath.startsWith('https://')
+        ? sceneState.videoLocalPath
+        : `/api/serve-video?path=${encodeURIComponent(sceneState.videoLocalPath)}`,
+      localPath: sceneState.videoLocalPath,
+      actualDuration: sceneState.actualDuration,
+      timestamp: new Date().toISOString(),
+    } : undefined);
+  
+  // Ensure video URL is properly formatted for playback
+  const videoUrl = selectedVideo?.url || (selectedVideo?.localPath 
+    ? (selectedVideo.localPath.startsWith('http://') || selectedVideo.localPath.startsWith('https://')
+      ? selectedVideo.localPath
+      : `/api/serve-video?path=${encodeURIComponent(selectedVideo.localPath)}`)
+    : undefined);
+  
+  const sceneHasVideo = !!selectedVideo && !!videoUrl;
   const seedFrames = sceneState?.seedFrames || [];
 
   // Update selected image ID when scene state changes
@@ -525,11 +544,13 @@ export default function EditorView() {
                 console.error(`[EditorView] This will cause seed frames to be extracted from the wrong scene!`);
                 // Try to get the correct video path from scene state (might be updated by now)
                 const currentSceneState = scenes[currentSceneIndex];
-                if (currentSceneState?.videoLocalPath) {
-                  const correctPathSceneIndex = currentSceneState.videoLocalPath.match(/scene-(\d+)-/);
+                const currentSelectedVideo = currentSceneState?.generatedVideos?.find(v => v.id === currentSceneState.selectedVideoId)
+                  || (currentSceneState?.videoLocalPath ? { localPath: currentSceneState.videoLocalPath } : undefined);
+                if (currentSelectedVideo?.localPath) {
+                  const correctPathSceneIndex = currentSelectedVideo.localPath.match(/scene-(\d+)-/);
                   if (correctPathSceneIndex && parseInt(correctPathSceneIndex[1]) === currentSceneIndex) {
-                    console.log(`[EditorView] Using corrected video path from scene state: ${currentSceneState.videoLocalPath}`);
-                    videoPath = currentSceneState.videoLocalPath;
+                    console.log(`[EditorView] Using corrected video path from scene state: ${currentSelectedVideo.localPath}`);
+                    videoPath = currentSelectedVideo.localPath;
                   } else {
                     throw new Error(`Cannot extract seed frames: Video path is for scene ${pathSceneIndex}, but we need scene ${currentSceneIndex}`);
                   }
@@ -621,7 +642,7 @@ export default function EditorView() {
   };
 
   const handleApproveAndContinue = async () => {
-    if (!project?.id || !sceneState?.videoLocalPath) return;
+    if (!project?.id || !selectedVideo) return;
 
     // Mark current scene as completed
     setSceneStatus(currentSceneIndex, 'completed');
@@ -1429,11 +1450,7 @@ export default function EditorView() {
             {/* Video Preview */}
             <div className="relative">
               <VideoPlayer
-                src={sceneState?.videoLocalPath ? (
-                  sceneState.videoLocalPath.startsWith('http://') || sceneState.videoLocalPath.startsWith('https://')
-                    ? sceneState.videoLocalPath // Use Replicate URL directly
-                    : `/api/serve-video?path=${encodeURIComponent(sceneState.videoLocalPath)}` // Use local path via API
-                ) : undefined}
+                src={videoUrl}
                 className="w-full"
               />
               {/* Regenerate Button */}

@@ -12,6 +12,7 @@ import https from 'https';
 import http from 'http';
 
 import { VIDEO_CONFIG } from '@/lib/config/ai-models';
+import { enhanceVideoPrompt } from '@/lib/utils/video-prompt-enhancer';
 
 // ============================================================================
 // Constants
@@ -148,7 +149,21 @@ export async function createVideoPrediction(
   console.log(`${logPrefix} Creating video prediction`);
   console.log(`${logPrefix} Timestamp: ${timestamp}`);
   console.log(`${logPrefix} Model: ${REPLICATE_MODEL}`);
-  console.log(`${logPrefix} Prompt: "${prompt}"`);
+  console.log(`${logPrefix} Original Prompt: "${prompt}"`);
+  
+  // Enhance the prompt for video generation (especially for automotive content)
+  const { enhancedPrompt, negativePrompt } = enhanceVideoPrompt(prompt, {
+    ensureHeadlights: true,
+    ensureCorrectWheelRotation: true,
+    addMotionDetails: true,
+    useNegativePrompt: true,
+  });
+  
+  console.log(`${logPrefix} Enhanced Prompt: "${enhancedPrompt}"`);
+  if (negativePrompt) {
+    console.log(`${logPrefix} Negative Prompt: "${negativePrompt}"`);
+  }
+  
   console.log(`${logPrefix} Inputs:`);
   console.log(`${logPrefix}   - Image URL: ${imageUrl}`);
   if (seedFrame) {
@@ -193,7 +208,9 @@ export async function createVideoPrediction(
     } : {
       image: inputImageUrl,
     }),
-    prompt: prompt.trim(),
+    prompt: enhancedPrompt.trim(),
+    // Add negative prompt if available
+    ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
     // WAN models use 'duration' and 'resolution'
     // Gen-4 models may use different parameters - adjust if needed
     ...(isGen4 ? {

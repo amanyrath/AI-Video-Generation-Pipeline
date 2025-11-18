@@ -24,10 +24,22 @@ export default function TimelineView() {
     0
   );
 
-  // Check if all scenes have videos
-  const allScenesHaveVideos = scenes.every(s => s.videoLocalPath);
+  // Check if all scenes have videos (using selected video or fallback to videoLocalPath)
+  const allScenesHaveVideos = scenes.every(s => {
+    if (s.selectedVideoId && s.generatedVideos) {
+      return s.generatedVideos.some(v => v.id === s.selectedVideoId);
+    }
+    return !!s.videoLocalPath;
+  });
   const videoPaths = scenes
-    .map(s => s.videoLocalPath)
+    .map(s => {
+      // Use selected video if available, otherwise fallback to videoLocalPath for backward compatibility
+      if (s.selectedVideoId && s.generatedVideos) {
+        const selectedVideo = s.generatedVideos.find(v => v.id === s.selectedVideoId);
+        return selectedVideo?.localPath;
+      }
+      return s.videoLocalPath;
+    })
     .filter((path): path is string => !!path);
 
   const handleSceneClick = (index: number) => {
