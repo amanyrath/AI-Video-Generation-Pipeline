@@ -150,6 +150,43 @@ export interface SeedFrame {
 }
 
 // ============================================================================
+// Timeline Clip Types
+// ============================================================================
+
+/**
+ * Represents a clip on the timeline that can be edited
+ */
+export interface TimelineClip {
+  id: string;                // UUID v4
+  sceneIndex: number;        // Original scene index this clip came from
+  sceneId: string;           // Original scene ID
+  title: string;             // Clip title (usually scene description)
+  videoId: string;           // Reference to GeneratedVideo ID
+  videoLocalPath: string;    // Local path to the source video file
+  startTime: number;         // Start time in the timeline (seconds)
+  duration: number;          // Duration of this clip (seconds)
+  
+  // Editing properties
+  trimStart?: number;        // Trim start point in source video (seconds, default: 0)
+  trimEnd?: number;          // Trim end point in source video (seconds, default: full duration)
+  isSplit?: boolean;         // Whether this clip was created by splitting
+  originalClipId?: string;   // If split, reference to original clip ID
+  
+  // Computed properties
+  endTime: number;           // End time in timeline (startTime + duration)
+  sourceDuration: number;   // Original source video duration before trimming
+}
+
+/**
+ * Timeline editing operations
+ */
+export type TimelineEditOperation = 
+  | { type: 'split'; clipId: string; splitTime: number }      // Split clip at time
+  | { type: 'delete'; clipId: string }                        // Delete clip
+  | { type: 'crop'; clipId: string; trimStart: number; trimEnd: number }  // Crop/trim clip
+  | { type: 'move'; clipId: string; newStartTime: number };   // Move clip position
+
+// ============================================================================
 // Error Types
 // ============================================================================
 

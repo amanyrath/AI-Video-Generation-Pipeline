@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import { ProjectState, Scene, SceneWithState, GeneratedImage, GeneratedVideo, SeedFrame } from '@/lib/types';
+import { ProjectState, Scene, SceneWithState, GeneratedImage, GeneratedVideo, SeedFrame, TimelineClip } from '@/lib/types';
 import { ViewMode, MediaDrawerState, DragDropState, ChatMessage } from '@/lib/types/components';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -26,6 +26,9 @@ interface ProjectStore {
   
   // Scene state (extended scenes with generation state)
   scenes: SceneWithState[];
+  
+  // Timeline state
+  timelineClips: TimelineClip[];
   
   // Workflow state (Phase 5.1.2)
   currentWorkflowStep: WorkflowStep;
@@ -100,6 +103,13 @@ interface ProjectStore {
   setHasUploadedImages: (has: boolean) => void;
   setUploadedImageUrls: (urls: string[]) => void;
   
+  // Timeline clip management
+  initializeTimelineClips: () => void;
+  splitClip: (clipId: string, splitTime: number) => void;
+  deleteClip: (clipId: string) => void;
+  cropClip: (clipId: string, trimStart: number, trimEnd: number) => void;
+  moveClip: (clipId: string, newStartTime: number) => void;
+  
   reset: () => void;
 }
 
@@ -117,6 +127,7 @@ const initialState = {
   },
   chatMessages: [],
   scenes: [] as SceneWithState[],
+  timelineClips: [] as TimelineClip[],
   currentWorkflowStep: 'idle' as WorkflowStep,
   isWorkflowPaused: false,
   processingSceneIndex: null as number | null,
@@ -769,6 +780,184 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           uploadedImageUrls: urls,
         },
       };
+    });
+  },
+  
+  // Timeline clip management
+  initializeTimelineClips: () => {
+    set((state) => {
+      if (!state.project || !state.scenes) return state;
+      
+      const clips: TimelineClip[] = [];
+      let currentStartTime = 0;
+      
+      state.scenes.forEach((scene, index) => {
+        // Get the selected video for this scene
+        const selectedVideo = scene.selectedVideoId && scene.generatedVideos
+          ? scene.generatedVideos.find(v => v.id === scene.selectedVideoId)
+          : null;
+        
+        // Fallback to legacy videoLocalPath
+        const videoPath = selectedVideo?.localPath || scene.videoLocalPath;
+        const videoId = selectedVideo?.id || 'legacy';
+        const videoDuration = selectedVideo?.actualDuration || scene.actualDuration || scene.suggestedDuration;
+        
+        if (videoPath && videoDuration) {
+          const clip: TimelineClip = {
+            id: uuidv4(),
+            sceneIndex: index,
+            sceneId: scene.id,
+            title: scene.description,
+            videoId,
+            videoLocalPath: videoPath,
+            startTime: currentStartTime,
+            duration: videoDuration,
+            endTime: currentStartTime + videoDuration,
+            sourceDuration: videoDuration,
+          };
+          
+          clips.push(clip);
+          currentStartTime += videoDuration;
+        }
+      });
+      
+      return { timelineClips: clips };
+    });
+  },
+  
+  splitClip: (clipId: string, splitTime: number) => {
+    set((state) => {
+      const clips = [...state.timelineClips];
+      const clipIndex = clips.findIndex(c => c.id === clipId);
+      
+      if (clipIndex === -1) return state;
+      
+      const clip = clips[clipIndex];
+      const relativeSplitTime = splitTime - clip.startTime;
+      
+      if (relativeSplitTime <= 0 || relativeSplitTime >= clip.duration) return state;
+      
+      // Create two clips from the split
+      const firstClip: TimelineClip = {
+        ...clip,
+        id: uuidv4(),
+        duration: relativeSplitTime,
+        endTime: clip.startTime + relativeSplitTime,
+        trimEnd: (clip.trimStart || 0) + relativeSplitTime,
+      };
+      
+      const secondClip: TimelineClip = {
+        ...clip,
+        id: uuidv4(),
+        startTime: clip.startTime + relativeSplitTime,
+        duration: clip.duration - relativeSplitTime,
+        endTime: clip.endTime,
+        trimStart: (clip.trimStart || 0) + relativeSplitTime,
+        isSplit: true,
+        originalClipId: clip.id,
+      };
+      
+      clips.splice(clipIndex, 1, firstClip, secondClip);
+      
+      // Recalculate start times for subsequent clips
+      let currentTime = firstClip.endTime;
+      for (let i = clipIndex + 2; i < clips.length; i++) {
+        clips[i].startTime = currentTime;
+        clips[i].endTime = currentTime + clips[i].duration;
+        currentTime = clips[i].endTime;
+      }
+      
+      return { timelineClips: clips };
+    });
+  },
+  
+  deleteClip: (clipId: string) => {
+    set((state) => {
+      const clips = state.timelineClips.filter(c => c.id !== clipId);
+      
+      // Recalculate start times for remaining clips
+      let currentTime = 0;
+      const updatedClips = clips.map(clip => {
+        const updated = { ...clip, startTime: currentTime, endTime: currentTime + clip.duration };
+        currentTime = updated.endTime;
+        return updated;
+      });
+      
+      return { timelineClips: updatedClips };
+    });
+  },
+  
+  cropClip: (clipId: string, trimStart: number, trimEnd: number) => {
+    set((state) => {
+      const clips = state.timelineClips.map(clip => {
+        if (clip.id !== clipId) return clip;
+        
+        // trimStart and trimEnd are absolute times in the source video
+        // Ensure they're within bounds
+        const sourceDuration = clip.sourceDuration;
+        const newTrimStart = Math.max(0, Math.min(trimStart, sourceDuration));
+        const newTrimEnd = Math.max(newTrimStart, Math.min(trimEnd, sourceDuration));
+        const newDuration = newTrimEnd - newTrimStart;
+        
+        return {
+          ...clip,
+          trimStart: newTrimStart,
+          trimEnd: newTrimEnd,
+          duration: newDuration,
+          endTime: clip.startTime + newDuration,
+        };
+      });
+      
+      // Recalculate start times for subsequent clips
+      let currentTime = 0;
+      const updatedClips = clips.map(clip => {
+        const updated = { ...clip, startTime: currentTime, endTime: currentTime + clip.duration };
+        currentTime = updated.endTime;
+        return updated;
+      });
+      
+      return { timelineClips: updatedClips };
+    });
+  },
+  
+  moveClip: (clipId: string, newStartTime: number) => {
+    set((state) => {
+      const clips = [...state.timelineClips];
+      const clipIndex = clips.findIndex(c => c.id === clipId);
+      
+      if (clipIndex === -1) return state;
+      
+      const clip = clips[clipIndex];
+      const newEndTime = newStartTime + clip.duration;
+      
+      // Check for overlaps
+      const hasOverlap = clips.some((c, i) => 
+        i !== clipIndex && 
+        ((newStartTime >= c.startTime && newStartTime < c.endTime) ||
+         (newEndTime > c.startTime && newEndTime <= c.endTime) ||
+         (newStartTime <= c.startTime && newEndTime >= c.endTime))
+      );
+      
+      if (hasOverlap) return state; // Don't move if it would overlap
+      
+      clips[clipIndex] = {
+        ...clip,
+        startTime: newStartTime,
+        endTime: newEndTime,
+      };
+      
+      // Sort clips by start time
+      clips.sort((a, b) => a.startTime - b.startTime);
+      
+      // Recalculate all start times to remove gaps
+      let currentTime = 0;
+      const updatedClips = clips.map(c => {
+        const updated = { ...c, startTime: currentTime, endTime: currentTime + c.duration };
+        currentTime = updated.endTime;
+        return updated;
+      });
+      
+      return { timelineClips: updatedClips };
     });
   },
   

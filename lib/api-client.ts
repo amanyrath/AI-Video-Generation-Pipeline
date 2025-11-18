@@ -591,6 +591,85 @@ export async function getProjectStatus(projectId: string): Promise<any> {
 }
 
 /**
+ * Apply clip edits (trim/crop) to timeline clips
+ */
+export async function applyClipEdits(
+  clips: Array<{
+    id: string;
+    videoLocalPath: string;
+    trimStart?: number;
+    trimEnd?: number;
+    sourceDuration: number;
+  }>,
+  projectId: string
+): Promise<string[]> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/apply-clip-edits`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        clips,
+        projectId,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to apply clip edits' }));
+      throw new Error(error.error || 'Failed to apply clip edits');
+    }
+
+    const result = await response.json();
+    if (result.success && result.data?.editedVideoPaths) {
+      return result.data.editedVideoPaths;
+    } else {
+      throw new Error(result.error || 'Invalid response structure from apply clip edits API');
+    }
+  });
+}
+
+/**
+ * Generate a preview video from timeline clips with edits applied
+ * This creates a temporary stitched video for smooth playback
+ */
+export async function generatePreview(
+  clips: Array<{
+    id: string;
+    videoLocalPath: string;
+    trimStart?: number;
+    trimEnd?: number;
+    sourceDuration: number;
+  }>,
+  projectId: string
+): Promise<string> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/generate-preview`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        clips,
+        projectId,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to generate preview' }));
+      throw new Error(error.error || 'Failed to generate preview');
+    }
+
+    const result = await response.json();
+    if (result.success && result.data?.previewVideoPath) {
+      return result.data.previewVideoPath;
+    } else {
+      throw new Error(result.error || 'Invalid response structure from generate preview API');
+    }
+  });
+}
+
+/**
  * Upload image to S3
  */
 export async function uploadImageToS3(
