@@ -494,7 +494,12 @@ export default function SceneCard({
         <div className="mt-3 rounded-md overflow-hidden border border-white/20">
           {isVisible ? (
             <img
-              src={scenes[sceneIndex].generatedImages[0].url}
+              src={scenes[sceneIndex].generatedImages[0].localPath
+                ? `/api/serve-image?path=${encodeURIComponent(scenes[sceneIndex].generatedImages[0].localPath)}`
+                : scenes[sceneIndex].generatedImages[0].url.startsWith('/api')
+                  ? scenes[sceneIndex].generatedImages[0].url
+                  : `/api/serve-image?path=${encodeURIComponent(scenes[sceneIndex].generatedImages[0].localPath || scenes[sceneIndex].generatedImages[0].url)}`
+              }
               alt={`Scene ${sceneIndex + 1} preview`}
               className="w-full aspect-video object-cover"
               loading="lazy"

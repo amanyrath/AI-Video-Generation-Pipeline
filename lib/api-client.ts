@@ -680,11 +680,12 @@ export async function generatePreview(
 
 /**
  * Upload image to S3
+ * Returns both the standard S3 URL and a pre-signed URL for external API access
  */
 export async function uploadImageToS3(
   imagePath: string,
   projectId: string
-): Promise<{ s3Url: string; s3Key: string }> {
+): Promise<{ s3Url: string; s3Key: string; preSignedUrl: string }> {
   return retryRequest(async () => {
     const response = await fetch(`${API_BASE_URL}/api/upload-image-s3`, {
       method: 'POST',

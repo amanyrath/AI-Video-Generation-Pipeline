@@ -13,6 +13,7 @@ import http from 'http';
 
 import { VIDEO_CONFIG } from '@/lib/config/ai-models';
 import { enhanceVideoPrompt } from '@/lib/utils/video-prompt-enhancer';
+import { getStorageService, type StoredFile } from '@/lib/storage/storage-service';
 
 // ============================================================================
 // Constants
@@ -497,14 +498,15 @@ async function downloadVideoWithRetry(
 
 /**
  * Generate a video from an image using Replicate Luma Ray
- * 
+ *
  * @param imageUrl - URL or path to the image to use as starting frame
  * @param prompt - Text description of desired motion/action
  * @param seedFrame - Optional seed frame URL (for Scene 1-4)
  * @param projectId - Project ID for organizing output files
  * @param sceneIndex - Scene index for organizing output files
- * @returns Local path to the generated video file
- * 
+ * @param sceneId - Optional scene ID for database tracking
+ * @returns Object with local path and S3 URL of the generated video
+ *
  * @throws Error if video generation fails, times out, or download fails
  */
 export async function generateVideo(
@@ -512,8 +514,9 @@ export async function generateVideo(
   prompt: string,
   seedFrame: string | undefined,
   projectId: string,
-  sceneIndex: number
-): Promise<string> {
+  sceneIndex: number,
+  sceneId?: string
+): Promise<{ localPath: string; s3Url: string; s3Key: string; storedFile: StoredFile }> {
   // Validate inputs
   if (!imageUrl) {
     throw new Error('Image URL is required');
@@ -538,14 +541,14 @@ export async function generateVideo(
   const modelName = REPLICATE_MODEL.split('/').pop()?.split(':')[0] || 'unknown';
   const sanitizedModelName = modelName.replace(/[^a-zA-Z0-9.-]/g, '-');
 
-  // Create output directory in video testing folder
-  const projectRoot = process.cwd();
-  const outputDir = path.join(projectRoot, 'video testing');
+  // Create output directory in proper temp location (not cwd/video testing)
+  const outputDir = path.join('/tmp', 'projects', projectId, 'generated-videos');
   await fs.mkdir(outputDir, { recursive: true });
 
   // Create unique filename with timestamp and model name
   const timestamp = Date.now();
-  const outputPath = path.join(outputDir, `scene-${sceneIndex}-${sanitizedModelName}-${timestamp}.mp4`);
+  const filename = `scene-${sceneIndex}-${sanitizedModelName}-${timestamp}.mp4`;
+  const outputPath = path.join(outputDir, filename);
 
   console.log(`${logPrefix} Using model: ${REPLICATE_MODEL} (${sanitizedModelName})`);
 
@@ -561,18 +564,42 @@ export async function generateVideo(
     await downloadVideoWithRetry(videoUrl, outputPath);
 
     // Verify file was created
+    let fileSize = 0;
     try {
       await fs.access(outputPath);
       const stats = await fs.stat(outputPath);
+      fileSize = stats.size;
       console.log(`${logPrefix} Video downloaded successfully`);
-      console.log(`${logPrefix} File size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
-      console.log(`${logPrefix} Output path: ${outputPath}`);
-      console.log(`${logPrefix} ========================================`);
+      console.log(`${logPrefix} File size: ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
     } catch {
       throw new Error('Video file was not created after download');
     }
 
-    return outputPath;
+    // Step 4: Upload to S3 using storage service
+    console.log(`${logPrefix} Uploading video to S3...`);
+    const storageService = getStorageService();
+    const storedFile = await storageService.storeFromLocalPath(outputPath, {
+      projectId,
+      sceneId,
+      category: 'generated-videos',
+      mimeType: 'video/mp4',
+      customFilename: filename,
+    }, {
+      keepLocal: true,  // Keep local for FFmpeg operations
+      deleteSource: false,
+    });
+
+    console.log(`${logPrefix} Video uploaded to S3`);
+    console.log(`${logPrefix} S3 Key: ${storedFile.s3Key}`);
+    console.log(`${logPrefix} Local path: ${storedFile.localPath}`);
+    console.log(`${logPrefix} ========================================`);
+
+    return {
+      localPath: storedFile.localPath,
+      s3Url: storedFile.url,
+      s3Key: storedFile.s3Key,
+      storedFile,
+    };
   } catch (error) {
     // Clean up partial file on error
     try {
@@ -586,12 +613,29 @@ export async function generateVideo(
   }
 }
 
+/**
+ * Legacy generateVideo function that returns just the local path
+ * For backward compatibility with existing code
+ * @deprecated Use generateVideo instead which returns full storage info
+ */
+export async function generateVideoLegacy(
+  imageUrl: string,
+  prompt: string,
+  seedFrame: string | undefined,
+  projectId: string,
+  sceneIndex: number
+): Promise<string> {
+  const result = await generateVideo(imageUrl, prompt, seedFrame, projectId, sceneIndex);
+  return result.localPath;
+}
+
 // ============================================================================
 // Export
 // ============================================================================
 
 export default {
   generateVideo,
+  generateVideoLegacy,
   createVideoPrediction,
   createVideoPredictionWithRetry,
   pollVideoStatus,
