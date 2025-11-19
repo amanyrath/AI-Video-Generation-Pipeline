@@ -16,7 +16,7 @@ import {
   generateStoryboard,
   uploadImages,
 } from '@/lib/api-client';
-import { ImageGenerationRequest } from '@/lib/types';
+import { ImageGenerationRequest, GeneratedImage, GeneratedVideo, SceneWithState } from '@/lib/types';
 
 interface LeftPanelProps {
   onCollapse?: () => void;
@@ -211,7 +211,7 @@ export default function LeftPanel({ onCollapse }: LeftPanelProps) {
       const previousScene = scenes[sceneIndex - 1];
       if (previousScene?.selectedImageId) {
         const previousImage = previousScene.generatedImages?.find(
-          img => img.id === previousScene.selectedImageId
+          (img: GeneratedImage) => img.id === previousScene.selectedImageId
         );
         if (previousImage?.url && !referenceUrls.includes(previousImage.url)) {
           referenceUrls.push(previousImage.url);
@@ -324,7 +324,7 @@ export default function LeftPanel({ onCollapse }: LeftPanelProps) {
 
     const sceneState = scenes[sceneIndex];
     const selectedImage = sceneState?.selectedImageId
-      ? sceneState.generatedImages.find((img) => img.id === sceneState.selectedImageId)
+      ? sceneState.generatedImages.find((img: GeneratedImage) => img.id === sceneState.selectedImageId)
       : sceneState?.generatedImages[0];
 
     if (!selectedImage) {
@@ -487,15 +487,15 @@ export default function LeftPanel({ onCollapse }: LeftPanelProps) {
     }
 
     const videoPaths = scenes
-      .map((s) => {
+      .map((s: SceneWithState) => {
         // Use selected video if available, otherwise fallback to videoLocalPath for backward compatibility
         if (s.selectedVideoId && s.generatedVideos) {
-          const selectedVideo = s.generatedVideos.find(v => v.id === s.selectedVideoId);
+          const selectedVideo = s.generatedVideos.find((v: GeneratedVideo) => v.id === s.selectedVideoId);
           return selectedVideo?.localPath;
         }
         return s.videoLocalPath;
       })
-      .filter((path): path is string => !!path);
+      .filter((path: string | undefined): path is string => !!path);
 
     if (videoPaths.length === 0) {
       addChatMessage({

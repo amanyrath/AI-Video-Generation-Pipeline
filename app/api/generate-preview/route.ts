@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { stitchVideos } from '@/lib/video/stitcher';
-import { applyClipEdits } from '@/lib/video/editor';
+import { applyClipEdits, clearClipEditCache } from '@/lib/video/editor';
 import { TimelineClip } from '@/lib/types';
 import path from 'path';
 import fs from 'fs/promises';
@@ -65,6 +65,16 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    // Clear old cached clips to ensure fresh processing with latest encoding
+    // This fixes issues with clips that may have been encoded with broken settings
+    const timelineEditsDir = path.join('/tmp', 'projects', projectId, 'timeline-edits');
+    try {
+      await fs.rm(timelineEditsDir, { recursive: true, force: true });
+    } catch {
+      // Directory may not exist yet
+    }
+    clearClipEditCache();
 
     // Apply clip edits (trim/crop) to get edited video paths
     const editedVideoPaths = await applyClipEdits(clips as TimelineClip[], projectId);

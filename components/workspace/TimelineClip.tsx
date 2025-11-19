@@ -66,13 +66,17 @@ export default function TimelineClip({
           left: `${leftPercent}%`,
           width: `${Math.max(widthPercent, 2)}%`,
         }}
-        onClick={onSelect}
+        data-clip="true"
+        onClick={(e) => {
+          // Don't stop propagation - let timeline track also handle click for seeking
+          onSelect?.();
+        }}
         onMouseEnter={() => setShowControls(true)}
         onMouseLeave={() => !showCropDialog && setShowControls(false)}
       >
         <div className="h-full flex flex-col p-2.5 relative overflow-hidden">
-          {/* Trim Indicator */}
-          {(clip.trimStart || clip.trimEnd) && (
+          {/* Trim Indicator - Only show if actually trimmed from original source */}
+          {((clip.trimStart && clip.trimStart > 0) || (clip.trimEnd && clip.trimEnd < clip.sourceDuration)) && (
             <div className="absolute top-0 left-0 right-0 h-1 bg-yellow-400/60" />
           )}
 

@@ -49,20 +49,23 @@ export async function cropVideo(
   endTime: number
 ): Promise<void> {
   const duration = endTime - startTime;
-  
+
   // Ensure output directory exists
   const outputDir = path.dirname(outputPath);
   await fs.mkdir(outputDir, { recursive: true });
-  
-  // Use ffmpeg to crop the video
-  const command = `ffmpeg -i "${inputPath}" -ss ${startTime} -t ${duration} -c copy -avoid_negative_ts make_zero "${outputPath}"`;
-  
+
+  // Always re-encode when cropping to ensure proper keyframe alignment
+  // Using -c copy can produce files without video streams for short segments
+  // Use -ss before -i for faster seeking (input seeking)
+  const command = `ffmpeg -ss ${startTime} -i "${inputPath}" -t ${duration} -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k -avoid_negative_ts make_zero -y "${outputPath}"`;
+
   try {
     await execAsync(command);
-  } catch (error) {
-    // If copy codec fails, try re-encoding
-    const reencodeCommand = `ffmpeg -i "${inputPath}" -ss ${startTime} -t ${duration} -c:v libx264 -c:a aac -avoid_negative_ts make_zero "${outputPath}"`;
-    await execAsync(reencodeCommand);
+  } catch (error: any) {
+    // If re-encoding fails (e.g., no audio stream), try video only
+    console.log(`[Editor] Re-encoding with audio failed, trying video only: ${error.message}`);
+    const videoOnlyCommand = `ffmpeg -ss ${startTime} -i "${inputPath}" -t ${duration} -c:v libx264 -preset ultrafast -crf 23 -an -avoid_negative_ts make_zero -y "${outputPath}"`;
+    await execAsync(videoOnlyCommand);
   }
 }
 

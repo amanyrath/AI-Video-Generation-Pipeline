@@ -135,7 +135,7 @@ export default function CharacterValidationScreen() {
       // Use original uploaded images as fallback
       if (project?.uploadedImageUrls) {
         setCharacterImages(
-          project.uploadedImageUrls.map((url, index) => ({
+          project.uploadedImageUrls.map((url: string, index: number) => ({
             id: `uploaded-${index}`,
             url,
             selected: index === 0,
@@ -744,7 +744,7 @@ export default function CharacterValidationScreen() {
                 <div className="space-y-4">
                   <h2 className="text-lg font-semibold text-white">Reference Images</h2>
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
-                    {project.uploadedImageUrls.map((url, index) => {
+                    {project.uploadedImageUrls.map((url: string, index: number) => {
                       // Convert local paths to serveable URLs
                       let imageUrl = url;
                       if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {

@@ -6,7 +6,8 @@ import SeedFrameSelector from './SeedFrameSelector';
 import { Loader2, Image as ImageIcon, Video, CheckCircle2, X, Edit2, Save, X as XIcon, Upload, XCircle, ChevronUp, ChevronDown } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { generateImage, pollImageStatus, generateVideo, pollVideoStatus, uploadImageToS3, extractFrames, uploadImages } from '@/lib/api-client';
-import { GeneratedImage, SeedFrame } from '@/lib/types';
+import { GeneratedImage, GeneratedVideo, SeedFrame } from '@/lib/types';
+import { UploadedImage, ProcessedImage } from '@/lib/storage/image-storage';
 import { useMediaDragDrop } from '@/lib/hooks/useMediaDragDrop';
 
 interface ImagePreviewModalProps {
@@ -107,9 +108,9 @@ export default function EditorView() {
   const sceneState = scenes[currentSceneIndex];
   const sceneImages = sceneState?.generatedImages || [];
   const sceneHasImage = sceneImages.length > 0;
-  const selectedImage = sceneImages.find(img => img.id === (selectedImageId || sceneState?.selectedImageId));
+  const selectedImage = sceneImages.find((img: GeneratedImage) => img.id === (selectedImageId || sceneState?.selectedImageId));
   // Get selected video (prefer selectedVideoId, fallback to videoLocalPath for backward compatibility)
-  const selectedVideo = sceneState?.generatedVideos?.find(v => v.id === sceneState.selectedVideoId) 
+  const selectedVideo = sceneState?.generatedVideos?.find((v: GeneratedVideo) => v.id === sceneState.selectedVideoId) 
     || (sceneState?.videoLocalPath ? {
       id: 'legacy',
       url: sceneState.videoLocalPath.startsWith('http://') || sceneState.videoLocalPath.startsWith('https://')
@@ -151,7 +152,7 @@ export default function EditorView() {
         : [];
       setCustomImageFiles([]);
       // Populate droppedImageUrls with saved images so they're preserved when adding new ones
-      setDroppedImageUrls(imageInputs.map(url => {
+      setDroppedImageUrls(imageInputs.map((url: string) => {
         // Convert serveable URLs back to original paths if needed
         if (url.startsWith('/api/serve-image?path=')) {
           return decodeURIComponent(url.split('path=')[1]);
@@ -159,7 +160,7 @@ export default function EditorView() {
         return url;
       }));
       // Set previews with properly formatted URLs
-      setCustomImagePreviews(imageInputs.map(url => {
+      setCustomImagePreviews(imageInputs.map((url: string) => {
         // Convert local paths to serveable URLs for preview
         let previewUrl = url;
         if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/api') && !url.startsWith('blob:')) {
@@ -240,15 +241,17 @@ export default function EditorView() {
 
             // Ensure the seed frame URL is a public URL (S3 or serveable)
             if (selectedFrame?.url) {
-              seedFrameUrl = selectedFrame.url;
+              const frameUrl = selectedFrame.url;
               // If it's a local path, convert to serveable URL
-              if (!seedFrameUrl.startsWith('http://') && !seedFrameUrl.startsWith('https://') && !seedFrameUrl.startsWith('/api')) {
-                seedFrameUrl = `/api/serve-image?path=${encodeURIComponent(selectedFrame.localPath || selectedFrame.url)}`;
+              if (!frameUrl.startsWith('http://') && !frameUrl.startsWith('https://') && !frameUrl.startsWith('/api')) {
+                seedFrameUrl = `/api/serve-image?path=${encodeURIComponent(selectedFrame.localPath || frameUrl)}`;
+              } else {
+                seedFrameUrl = frameUrl;
               }
 
               // Use the seed frame as the seed image for image-to-image generation
               seedImageUrl = seedFrameUrl;
-              console.log(`[EditorView] Scene ${currentSceneIndex}: Using seed frame as seed image for image-to-image generation:`, seedImageUrl.substring(0, 80) + '...');
+              console.log(`[EditorView] Scene ${currentSceneIndex}: Using seed frame as seed image for image-to-image generation:`, seedImageUrl!.substring(0, 80) + '...');
             }
           }
         } else {
@@ -257,7 +260,7 @@ export default function EditorView() {
       } else if (referenceImageUrls.length > 0) {
         // For Scene 0: Use reference image as seed image if available
         seedImageUrl = referenceImageUrls[0];
-        console.log(`[EditorView] Scene ${currentSceneIndex}: Using reference image as seed image:`, seedImageUrl.substring(0, 80) + '...');
+        console.log(`[EditorView] Scene ${currentSceneIndex}: Using reference image as seed image:`, seedImageUrl!.substring(0, 80) + '...');
       }
 
       // Generate 5 images in parallel
@@ -444,6 +447,9 @@ export default function EditorView() {
       }
 
       // Upload image to S3 if it's a local path, otherwise use the URL directly
+      if (!imageToUse) {
+        throw new Error('No image available for video generation');
+      }
       let s3Url: string;
       if (imageToUse.startsWith('http://') || imageToUse.startsWith('https://')) {
         // Already a public URL, use it directly
@@ -544,7 +550,7 @@ export default function EditorView() {
                 console.error(`[EditorView] This will cause seed frames to be extracted from the wrong scene!`);
                 // Try to get the correct video path from scene state (might be updated by now)
                 const currentSceneState = scenes[currentSceneIndex];
-                const currentSelectedVideo = currentSceneState?.generatedVideos?.find(v => v.id === currentSceneState.selectedVideoId)
+                const currentSelectedVideo = currentSceneState?.generatedVideos?.find((v: GeneratedVideo) => v.id === currentSceneState.selectedVideoId)
                   || (currentSceneState?.videoLocalPath ? { localPath: currentSceneState.videoLocalPath } : undefined);
                 if (currentSelectedVideo?.localPath) {
                   const correctPathSceneIndex = currentSelectedVideo.localPath.match(/scene-(\d+)-/);
@@ -675,7 +681,7 @@ export default function EditorView() {
         : [];
       setCustomImageFiles([]);
       // Populate droppedImageUrls with saved images so they're preserved when adding new ones
-      setDroppedImageUrls(imageInputs.map(url => {
+      setDroppedImageUrls(imageInputs.map((url: string) => {
         // Convert serveable URLs back to original paths if needed
         if (url.startsWith('/api/serve-image?path=')) {
           return decodeURIComponent(url.split('path=')[1]);
@@ -683,7 +689,7 @@ export default function EditorView() {
         return url;
       }));
       // Set previews with properly formatted URLs
-      setCustomImagePreviews(imageInputs.map(url => {
+      setCustomImagePreviews(imageInputs.map((url: string) => {
         // Convert local paths to serveable URLs for preview
         let previewUrl = url;
         if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/api') && !url.startsWith('blob:')) {
@@ -786,7 +792,7 @@ export default function EditorView() {
     // Search in generated images
     for (const scene of scenes) {
       if (scene.generatedImages) {
-        const image = scene.generatedImages.find(img => img.id === itemId);
+        const image = scene.generatedImages.find((img: GeneratedImage) => img.id === itemId);
         if (image) {
           // Return the URL - could be local path or S3 URL
           return image.url || image.localPath || null;
@@ -797,7 +803,7 @@ export default function EditorView() {
     // Search in seed frames
     for (const scene of scenes) {
       if (scene.seedFrames) {
-        const frame = scene.seedFrames.find(f => f.id === itemId);
+        const frame = scene.seedFrames.find((f: SeedFrame) => f.id === itemId);
         if (frame) {
           // Return the URL - could be S3 URL or local path
           return frame.url || frame.localPath || null;
@@ -808,7 +814,7 @@ export default function EditorView() {
     // Search in uploaded images
     if (project?.uploadedImages) {
       // Check original images
-      const uploadedImage = project.uploadedImages.find(img => img.id === itemId);
+      const uploadedImage = project.uploadedImages.find((img: UploadedImage) => img.id === itemId);
       if (uploadedImage) {
         return uploadedImage.url || uploadedImage.localPath || null;
       }
@@ -816,7 +822,7 @@ export default function EditorView() {
       // Check processed versions
       for (const uploadedImage of project.uploadedImages) {
         if (uploadedImage.processedVersions) {
-          const processed = uploadedImage.processedVersions.find(p => p.id === itemId);
+          const processed = uploadedImage.processedVersions.find((p: ProcessedImage) => p.id === itemId);
           if (processed) {
             return processed.url || processed.localPath || null;
           }
@@ -1063,7 +1069,7 @@ export default function EditorView() {
       : [];
     setCustomImageFiles([]);
     // Populate droppedImageUrls with saved images
-    setDroppedImageUrls(imageInputs.map(url => {
+    setDroppedImageUrls(imageInputs.map((url: string) => {
       // Convert serveable URLs back to original paths if needed
       if (url.startsWith('/api/serve-image?path=')) {
         return decodeURIComponent(url.split('path=')[1]);
@@ -1071,7 +1077,7 @@ export default function EditorView() {
       return url;
     }));
     // Set previews with properly formatted URLs
-    setCustomImagePreviews(imageInputs.map(url => {
+    setCustomImagePreviews(imageInputs.map((url: string) => {
       // Convert local paths to serveable URLs for preview
       let previewUrl = url;
       if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/api') && !url.startsWith('blob:')) {

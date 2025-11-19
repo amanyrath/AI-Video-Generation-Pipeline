@@ -68,7 +68,7 @@ export async function GET() {
     
     // Now test a simple chat completion to verify the key works for actual requests
     let chatTestSuccess = false;
-    let chatTestError = null;
+    let chatTestError: string | null = null;
     
     try {
       const chatResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {

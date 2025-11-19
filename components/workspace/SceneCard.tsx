@@ -197,15 +197,17 @@ export default function SceneCard({
 
             // Ensure the seed frame URL is a public URL (S3 or serveable)
             if (selectedFrame?.url) {
-              seedFrameUrl = selectedFrame.url;
+              const frameUrl = selectedFrame.url;
               // If it's a local path, convert to serveable URL
-              if (!seedFrameUrl.startsWith('http://') && !seedFrameUrl.startsWith('https://') && !seedFrameUrl.startsWith('/api')) {
-                seedFrameUrl = `/api/serve-image?path=${encodeURIComponent(selectedFrame.localPath || selectedFrame.url)}`;
+              if (!frameUrl.startsWith('http://') && !frameUrl.startsWith('https://') && !frameUrl.startsWith('/api')) {
+                seedFrameUrl = `/api/serve-image?path=${encodeURIComponent(selectedFrame.localPath || frameUrl)}`;
+              } else {
+                seedFrameUrl = frameUrl;
               }
 
               // Use the seed frame as the seed image for image-to-image generation
               seedImageUrl = seedFrameUrl;
-              console.log(`[SceneCard] Scene ${sceneIndex}: Using seed frame as seed image for image-to-image generation:`, seedImageUrl.substring(0, 80) + '...');
+              console.log(`[SceneCard] Scene ${sceneIndex}: Using seed frame as seed image for image-to-image generation:`, seedImageUrl!.substring(0, 80) + '...');
             }
           }
         } else {
@@ -214,7 +216,7 @@ export default function SceneCard({
       } else if (referenceImageUrls.length > 0) {
         // For Scene 0: Use reference image as seed image if available
         seedImageUrl = referenceImageUrls[0];
-        console.log(`[SceneCard] Scene ${sceneIndex}: Using reference image as seed image:`, seedImageUrl.substring(0, 80) + '...');
+        console.log(`[SceneCard] Scene ${sceneIndex}: Using reference image as seed image:`, seedImageUrl!.substring(0, 80) + '...');
       }
 
       // Get prompt adjustment mode from runtime config

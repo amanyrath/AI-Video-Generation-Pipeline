@@ -3,7 +3,8 @@
 import { useProjectStore } from '@/lib/state/project-store';
 import VideoPlayer from './VideoPlayer';
 import TimelineClip from './TimelineClip';
-import { Clock, Play, Download, Loader2, AlertCircle, RefreshCw, Film, ZoomIn, ZoomOut } from 'lucide-react';
+import TimelineToolbar from './TimelineToolbar';
+import { Clock, Play, Download, Loader2, AlertCircle, RefreshCw, Film, ZoomIn, ZoomOut, X } from 'lucide-react';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { stitchVideos, applyClipEdits, generatePreview } from '@/lib/api-client';
 
@@ -18,11 +19,12 @@ export default function TimelineView() {
     cropClip,
     setFinalVideo,
     addChatMessage,
+    selectedClipId,
+    setSelectedClipId,
   } = useProjectStore();
 
   const [isStitching, setIsStitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1); // 1 = normal, >1 = zoomed in, <1 = zoomed out
   const [currentTimelineTime, setCurrentTimelineTime] = useState(0); // Overall timeline playback time
@@ -30,7 +32,24 @@ export default function TimelineView() {
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   const [actualVideoDuration, setActualVideoDuration] = useState<number | null>(null);
+  const [showCropDialog, setShowCropDialog] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const timelineTrackRef = useRef<HTMLDivElement>(null);
+  const preservedTimeRef = useRef<number | null>(null); // Track position to preserve after preview regeneration
+  const isRestoringPositionRef = useRef(false); // Prevent seeking event from overriding restored position
+
+  // Get selected clip for crop dialog
+  const selectedClip = selectedClipId ? timelineClips.find(c => c.id === selectedClipId) : null;
+  const [cropStart, setCropStart] = useState(0);
+  const [cropEnd, setCropEnd] = useState(0);
+
+  // Update crop values when selected clip changes
+  useEffect(() => {
+    if (selectedClip) {
+      setCropStart(selectedClip.trimStart || 0);
+      setCropEnd(selectedClip.trimEnd || selectedClip.sourceDuration);
+    }
+  }, [selectedClip]);
 
   // Initialize timeline clips when scenes change
   useEffect(() => {
@@ -56,6 +75,9 @@ export default function TimelineView() {
     let cancelled = false;
 
     const generatePreviewVideo = async () => {
+      // Preserve current position before regenerating
+      preservedTimeRef.current = mappedTimelineTime;
+
       setIsGeneratingPreview(true);
       setError(null);
       setActualVideoDuration(null); // Reset duration for new preview
@@ -112,6 +134,8 @@ export default function TimelineView() {
       cancelled = true;
       clearTimeout(timeoutId);
     };
+  // Note: mappedTimelineTime is intentionally not in dependencies - we only read it when starting preview generation
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, timelineClips, addChatMessage]);
 
   if (!project || !project.storyboard || project.storyboard.length === 0) {
@@ -292,13 +316,31 @@ export default function TimelineView() {
   }, [previewVideoUrl, isPlaying, totalDuration]);
 
   // Calculate playhead position on timeline (smooth, no jumps)
-  // Use actual video duration for accurate sync, fallback to totalDuration
+  // Map video time to timeline time for accurate positioning
   const playheadPosition = useMemo(() => {
-    const effectiveDuration = actualVideoDuration || totalDuration;
-    if (effectiveDuration === 0) return 0;
+    if (totalDuration === 0) return 0;
+
+    // If actual video duration differs from timeline duration, scale the position
+    let mappedTime = currentTimelineTime;
+    if (actualVideoDuration && actualVideoDuration !== totalDuration) {
+      // Map video time to timeline time
+      const ratio = totalDuration / actualVideoDuration;
+      mappedTime = currentTimelineTime * ratio;
+    }
+
     // Clamp to valid range
-    const clampedTime = Math.max(0, Math.min(currentTimelineTime, effectiveDuration));
-    return (clampedTime / effectiveDuration) * 100;
+    const clampedTime = Math.max(0, Math.min(mappedTime, totalDuration));
+    return (clampedTime / totalDuration) * 100;
+  }, [currentTimelineTime, totalDuration, actualVideoDuration]);
+
+  // Get the mapped timeline time for split operations
+  const mappedTimelineTime = useMemo(() => {
+    if (!actualVideoDuration || actualVideoDuration === totalDuration) {
+      return currentTimelineTime;
+    }
+    // Map video time to timeline time
+    const ratio = totalDuration / actualVideoDuration;
+    return currentTimelineTime * ratio;
   }, [currentTimelineTime, totalDuration, actualVideoDuration]);
 
   // Handle play/pause
@@ -451,7 +493,126 @@ export default function TimelineView() {
     setSelectedClipId(clipId);
   };
 
-  const selectedClip = selectedClipId ? timelineClips.find(c => c.id === selectedClipId) : null;
+  const handleCropFromToolbar = () => {
+    if (selectedClip) {
+      setShowCropDialog(true);
+    }
+  };
+
+  const handleCropApply = () => {
+    if (selectedClipId) {
+      cropClip(selectedClipId, cropStart, cropEnd);
+      setShowCropDialog(false);
+      addChatMessage({
+        role: 'agent',
+        content: 'Clip cropped successfully. Regenerating preview...',
+        type: 'status',
+      });
+    }
+  };
+
+  // Handle click on timeline to seek
+  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (totalDuration <= 0) return;
+
+    // Get the clicked element and find the timeline track container
+    const clickedElement = e.currentTarget;
+
+    // Use the timelineTrackRef if available, otherwise use the clicked element's parent structure
+    let trackElement = timelineTrackRef.current;
+
+    // If clicking on time markers div, find the sibling track element
+    if (!trackElement || !clickedElement.contains(trackElement)) {
+      // Find the parent container that holds both time markers and track
+      const parentContainer = clickedElement.parentElement;
+      if (parentContainer) {
+        trackElement = parentContainer.querySelector('[data-timeline-track="true"]') as HTMLDivElement;
+      }
+    }
+
+    if (!trackElement) {
+      console.log('[Timeline] Could not find track element');
+      return;
+    }
+
+    const rect = trackElement.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+
+    // Get the scrollable parent container
+    const scrollContainer = trackElement.parentElement?.parentElement;
+    const scrollLeft = scrollContainer?.scrollLeft || 0;
+
+    // Calculate the total width
+    const trackWidth = trackElement.offsetWidth;
+
+    // Adjust for scroll position
+    const adjustedClickX = clickX + scrollLeft;
+
+    // Calculate percentage based on the track width
+    const percentage = Math.max(0, Math.min(1, adjustedClickX / trackWidth));
+    const seekTime = percentage * totalDuration;
+
+    // Clamp to valid range (this is timeline time)
+    const clampedTimelineTime = Math.max(0, Math.min(seekTime, totalDuration));
+
+    // Map timeline time back to video time if durations differ
+    let videoSeekTime = clampedTimelineTime;
+    if (actualVideoDuration && actualVideoDuration !== totalDuration) {
+      const ratio = actualVideoDuration / totalDuration;
+      videoSeekTime = clampedTimelineTime * ratio;
+    }
+
+    console.log('[Timeline] Click to seek:', {
+      clickX, scrollLeft, trackWidth, percentage,
+      timelineTime: clampedTimelineTime,
+      videoSeekTime,
+      actualVideoDuration,
+      totalDuration
+    });
+
+    // Update video position with mapped time
+    if (videoRef.current) {
+      videoRef.current.currentTime = videoSeekTime;
+    }
+
+    // Update timeline state with video time (will be mapped back for display)
+    setCurrentTimelineTime(videoSeekTime);
+  };
+
+  // Keyboard shortcuts for play/pause and other controls
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // Spacebar for play/pause
+      if (e.code === 'Space') {
+        e.preventDefault();
+        // Inline the play/pause logic to avoid stale closure
+        if (!videoRef.current || !previewVideoUrl) return;
+
+        if (videoRef.current.paused) {
+          // Start from beginning if at end
+          const effectiveDuration = actualVideoDuration || totalDuration;
+          if (currentTimelineTime >= effectiveDuration - 0.1) {
+            setCurrentTimelineTime(0);
+            videoRef.current.currentTime = 0;
+          }
+          videoRef.current.play();
+          setIsPlaying(true);
+        } else {
+          videoRef.current.pause();
+          setIsPlaying(false);
+        }
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewVideoUrl, currentTimelineTime, totalDuration, actualVideoDuration]);
 
   return (
     <div className="h-full flex flex-col bg-black">
@@ -499,17 +660,42 @@ export default function TimelineView() {
                   key={previewVideoUrl}
                   ref={videoRef}
                   src={previewVideoUrl}
-                  className="w-full h-96"
+                  className="w-full h-96 cursor-pointer"
                   onLoadedMetadata={() => {
-                    // Reset to start when video loads and capture actual duration
                     if (videoRef.current) {
-                      videoRef.current.currentTime = 0;
-                      setCurrentTimelineTime(0);
                       // Store the actual video duration for accurate playhead sync
                       const videoDuration = videoRef.current.duration;
                       if (videoDuration && isFinite(videoDuration)) {
                         setActualVideoDuration(videoDuration);
                         console.log(`[Timeline] Video duration: ${videoDuration.toFixed(2)}s (timeline: ${totalDuration.toFixed(2)}s)`);
+                      }
+
+                      // Restore preserved position or reset to start
+                      if (preservedTimeRef.current !== null && preservedTimeRef.current > 0) {
+                        // Set flag to prevent onSeeking from overriding
+                        isRestoringPositionRef.current = true;
+
+                        // Map the preserved timeline position back to video time
+                        let videoTime = preservedTimeRef.current;
+                        if (videoDuration && videoDuration !== totalDuration) {
+                          const ratio = videoDuration / totalDuration;
+                          videoTime = preservedTimeRef.current * ratio;
+                        }
+                        // Clamp to valid range
+                        videoTime = Math.max(0, Math.min(videoTime, videoDuration || totalDuration));
+                        videoRef.current.currentTime = videoTime;
+                        setCurrentTimelineTime(videoTime);
+                        console.log(`[Timeline] Restored position: ${preservedTimeRef.current.toFixed(2)}s → video time: ${videoTime.toFixed(2)}s`);
+                        preservedTimeRef.current = null;
+
+                        // Reset flag after a short delay to allow the seek to complete
+                        setTimeout(() => {
+                          isRestoringPositionRef.current = false;
+                        }, 100);
+                      } else {
+                        // Reset to start for initial load
+                        videoRef.current.currentTime = 0;
+                        setCurrentTimelineTime(0);
                       }
                     }
                   }}
@@ -521,24 +707,31 @@ export default function TimelineView() {
                   }}
                   onSeeking={() => {
                     // Immediately sync timeline when user seeks
-                    if (videoRef.current) {
+                    // But skip if we're in the middle of restoring position
+                    if (videoRef.current && !isRestoringPositionRef.current) {
                       setCurrentTimelineTime(Math.max(0, videoRef.current.currentTime || 0));
                     }
                   }}
-                  onClick={handlePlayPause}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePlayPause();
+                  }}
                   preload="auto"
                 />
-                {/* Custom Play/Pause Overlay */}
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none group-hover:pointer-events-auto">
-                  {!isPlaying && (
-                    <button
-                      onClick={handlePlayPause}
-                      className="p-4 bg-black/60 hover:bg-black/80 rounded-full transition-colors"
-                    >
+                {/* Custom Play/Pause Overlay - Only show play button when paused */}
+                {!isPlaying && (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePlayPause();
+                    }}
+                  >
+                    <div className="p-4 bg-black/60 hover:bg-black/80 rounded-full transition-colors">
                       <Play className="w-8 h-8 text-white" />
-                    </button>
-                  )}
-                </div>
+                    </div>
+                  </div>
+                )}
                 {/* Timeline Progress Bar */}
                 <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
                   <div
@@ -557,6 +750,45 @@ export default function TimelineView() {
 
         {/* Timeline Track Section */}
         <div className="flex-1 flex flex-col overflow-hidden px-6 py-4">
+          {/* Toolbar */}
+          <div className="mb-3 flex items-center justify-between">
+            <TimelineToolbar
+              currentTime={mappedTimelineTime}
+              onCropClick={handleCropFromToolbar}
+            />
+            <div className="flex items-center gap-4">
+              {/* Play/Pause Button */}
+              <button
+                onClick={handlePlayPause}
+                disabled={!previewVideoUrl}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  previewVideoUrl
+                    ? 'bg-white/10 hover:bg-white/20 text-white'
+                    : 'bg-white/5 text-white/30 cursor-not-allowed'
+                }`}
+              >
+                {isPlaying ? (
+                  <>
+                    <span className="w-3 h-3 flex items-center justify-center">⏸</span>
+                    Pause
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3 h-3" />
+                    Play
+                  </>
+                )}
+              </button>
+              <div className="text-xs text-white/40">
+                <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px]">Space</kbd> Play/Pause
+                <span className="mx-2">|</span>
+                <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px]">S</kbd> Split
+                <span className="mx-2">|</span>
+                <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-[10px]">Del</kbd> Delete
+              </div>
+            </div>
+          </div>
+
           <div className="mb-3">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium text-white/80">Timeline Track</h3>
@@ -603,9 +835,12 @@ export default function TimelineView() {
                     minWidth: '100%'
                   }}
                 >
-                  {/* Time markers - Top */}
-                  <div className="absolute top-0 left-0 right-0 h-8 border-b border-white/10 bg-black/30 backdrop-blur-sm z-10">
-                    <div className="relative h-full">
+                  {/* Time markers - Top - Also clickable for seeking */}
+                  <div
+                    className="absolute top-0 left-0 right-0 h-8 border-b border-white/10 bg-black/30 backdrop-blur-sm z-10 cursor-pointer"
+                    onClick={handleTimelineClick}
+                  >
+                    <div className="relative h-full pointer-events-none">
                       {Array.from({ length: Math.ceil(totalDuration * zoomLevel) + 1 }).map((_, i) => {
                         const time = i / zoomLevel;
                         if (time > totalDuration) return null;
@@ -625,7 +860,24 @@ export default function TimelineView() {
                   </div>
 
                   {/* Timeline Track */}
-                  <div className="relative h-28 bg-gradient-to-b from-white/5 to-white/[0.02] pt-8">
+                  <div
+                    ref={timelineTrackRef}
+                    className="relative h-28 bg-gradient-to-b from-white/5 to-white/[0.02] pt-8 cursor-pointer"
+                    onClick={(e) => {
+                      // Always handle click to seek
+                      handleTimelineClick(e);
+                      // Deselect when clicking directly on track background (not on a clip)
+                      if (e.target === e.currentTarget || (e.target as HTMLElement).closest('[data-timeline-track="true"]')) {
+                        // Check if we clicked on the track itself, not on a clip
+                        const clickedElement = e.target as HTMLElement;
+                        const isClip = clickedElement.closest('[data-clip="true"]');
+                        if (!isClip) {
+                          setSelectedClipId(null);
+                        }
+                      }
+                    }}
+                    data-timeline-track="true"
+                  >
                     {timelineClips.length > 0 ? (
                       timelineClips.map((clip) => (
                         <TimelineClip
@@ -773,6 +1025,87 @@ export default function TimelineView() {
           </div>
         </div>
       </div>
+
+      {/* Crop Dialog */}
+      {showCropDialog && selectedClip && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowCropDialog(false);
+            }
+          }}
+        >
+          <div
+            className="bg-gray-900 border border-white/20 rounded-lg p-6 w-96 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Crop Clip</h3>
+              <button
+                onClick={() => setShowCropDialog(false)}
+                className="text-white/60 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-white/80 mb-2">
+                  Start Time (seconds)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max={selectedClip.sourceDuration}
+                  step="0.1"
+                  value={cropStart}
+                  onChange={(e) => setCropStart(parseFloat(e.target.value) || 0)}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-white/80 mb-2">
+                  End Time (seconds)
+                </label>
+                <input
+                  type="number"
+                  min={cropStart}
+                  max={selectedClip.sourceDuration}
+                  step="0.1"
+                  value={cropEnd}
+                  onChange={(e) => setCropEnd(parseFloat(e.target.value) || selectedClip.sourceDuration)}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="text-xs text-white/60 bg-white/5 p-2 rounded">
+                Duration: <span className="font-mono">{(cropEnd - cropStart).toFixed(1)}s</span>
+                <span className="ml-2 text-white/40">
+                  (Source: {selectedClip.sourceDuration.toFixed(1)}s)
+                </span>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowCropDialog(false)}
+                  className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCropApply}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors font-medium"
+                >
+                  Apply Crop
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

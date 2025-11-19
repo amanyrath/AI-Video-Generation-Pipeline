@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Process each image
-    const uploadedImages = [];
+    const uploadedImages: import('@/lib/storage/image-storage').UploadedImage[] = [];
     const errors: string[] = [];
 
     for (let i = 0; i < imageFiles.length; i++) {
