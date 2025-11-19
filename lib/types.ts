@@ -44,8 +44,9 @@ export interface StoryboardResponse {
 
 export interface GeneratedImage {
   id: string;                // UUID v4
-  url: string;               // Local file path (for internal use)
-  localPath: string;         // Full local file path
+  url: string;               // S3 URL or API URL (for external access)
+  localPath: string;         // Full local file path (for server-side use)
+  s3Key?: string;            // S3 storage key
   prompt: string;            // Prompt used for generation
   replicateId: string;       // Replicate prediction ID
   createdAt: string;         // ISO 8601 timestamp
@@ -151,6 +152,7 @@ export interface SeedFrame {
   id: string;
   url: string;              // S3 URL or public HTTP/HTTPS URL (for video generation)
   localPath?: string;       // Optional: Local file path (for reference/fallback)
+  s3Key?: string;           // Optional: S3 storage key
   timestamp: number;        // 0.1s, 0.2s, 0.3s, 0.4s, 0.5s from end
 }
 

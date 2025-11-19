@@ -450,16 +450,16 @@ export default function EditorView() {
       if (!imageToUse) {
         throw new Error('No image available for video generation');
       }
-      let s3Url: string;
+      let imageUrlForReplicate: string;
       if (imageToUse.startsWith('http://') || imageToUse.startsWith('https://')) {
         // Already a public URL, use it directly
-        s3Url = imageToUse;
-        console.log('[EditorView] Image is already a public URL, using directly:', s3Url.substring(0, 80) + '...');
+        imageUrlForReplicate = imageToUse;
+        console.log('[EditorView] Image is already a public URL, using directly:', imageUrlForReplicate.substring(0, 80) + '...');
       } else {
-        // Local path, upload to S3
+        // Local path, upload to S3 and get pre-signed URL for Replicate
         const uploadResult = await uploadImageToS3(imageToUse, project.id);
-        s3Url = uploadResult.s3Url;
-        console.log('[EditorView] Uploaded image to S3:', s3Url.substring(0, 80) + '...');
+        imageUrlForReplicate = uploadResult.preSignedUrl; // Use pre-signed URL for Replicate access
+        console.log('[EditorView] Uploaded image to S3, using pre-signed URL:', imageUrlForReplicate.substring(0, 80) + '...');
       }
 
       // Get seed frame from previous scene (if enabled and not Scene 0)
@@ -471,17 +471,16 @@ export default function EditorView() {
         if (previousScene?.seedFrames && previousScene.seedFrames.length > 0) {
           const selectedIndex = previousScene.selectedSeedFrameIndex ?? 0;
           const selectedFrame = previousScene.seedFrames[selectedIndex];
-          
+
           // Check if frame URL is already a public URL (S3 or served via API)
           if (selectedFrame.url.startsWith('http://') || selectedFrame.url.startsWith('https://')) {
             seedFrameUrl = selectedFrame.url; // Already an S3/public URL
           } else {
-            // Upload to S3 (or get public URL via API fallback)
-            // The uploadImageToS3 API will handle S3 upload or return a public URL
+            // Upload to S3 and get pre-signed URL for Replicate
             const localPath = selectedFrame.localPath || selectedFrame.url;
             try {
-              const { s3Url: frameS3Url } = await uploadImageToS3(localPath, project.id);
-              seedFrameUrl = frameS3Url; // This will be either S3 URL or public URL from API
+              const { preSignedUrl: framePreSignedUrl } = await uploadImageToS3(localPath, project.id);
+              seedFrameUrl = framePreSignedUrl; // Use pre-signed URL for Replicate access
             } catch (error) {
               console.error('Error uploading seed frame:', error);
               // If upload fails, we can't proceed - the API requires a public URL
@@ -493,10 +492,10 @@ export default function EditorView() {
 
       // Get scene duration (customDuration takes precedence over suggestedDuration)
       const sceneDuration = currentScene.customDuration || currentScene.suggestedDuration;
-      
+
       // Generate video
       const videoResponse = await generateVideo(
-        s3Url,
+        imageUrlForReplicate, // Use pre-signed URL for Replicate access
         currentScene.imagePrompt,
         project.id,
         currentSceneIndex,
@@ -592,12 +591,13 @@ export default function EditorView() {
                 const uploadedFrames = await Promise.all(
                   response.frames.map(async (frame) => {
                     try {
-                      // Upload frame to S3
-                      const { s3Url } = await uploadImageToS3(frame.url, project.id);
+                      // Upload frame to S3 and get pre-signed URL for Replicate
+                      const { s3Url, preSignedUrl } = await uploadImageToS3(frame.url, project.id);
                       return {
                         ...frame,
-                        url: s3Url, // Update to S3 URL for video generation
+                        url: preSignedUrl, // Use pre-signed URL for Replicate access
                         localPath: frame.url, // Keep local path for reference
+                        s3Url, // Store S3 URL for storage reference
                       };
                     } catch (error) {
                       console.error('Error uploading seed frame to S3:', error);

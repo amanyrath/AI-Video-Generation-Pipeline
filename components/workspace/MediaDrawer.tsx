@@ -103,13 +103,20 @@ export default function MediaDrawer() {
     const allImages: MediaItem[] = [];
     scenes.forEach((scene, sceneIndex) => {
       scene.generatedImages?.forEach((img) => {
-        // Convert local path to serveable URL if needed
-        let imageUrl = img.url;
-        if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {
-          // Convert local path to serveable URL
+        // Always serve through API using localPath for consistent access
+        // S3 URLs may not be publicly accessible, so we proxy through our API
+        let imageUrl: string;
+        if (img.localPath) {
+          imageUrl = `/api/serve-image?path=${encodeURIComponent(img.localPath)}`;
+        } else if (img.url.startsWith('/api')) {
+          imageUrl = img.url;
+        } else if (!img.url.startsWith('http://') && !img.url.startsWith('https://')) {
+          imageUrl = `/api/serve-image?path=${encodeURIComponent(img.url)}`;
+        } else {
+          // For external URLs (including S3), still try to use localPath if available
           imageUrl = `/api/serve-image?path=${encodeURIComponent(img.localPath || img.url)}`;
         }
-        
+
         allImages.push({
           id: img.id,
           type: 'image' as const,
@@ -129,10 +136,20 @@ export default function MediaDrawer() {
       // Show all generated videos (old and new)
       if (scene.generatedVideos && scene.generatedVideos.length > 0) {
         scene.generatedVideos.forEach((video) => {
+          // Always serve through API using localPath for consistent access
+          let videoUrl: string;
+          if (video.localPath) {
+            videoUrl = `/api/serve-video?path=${encodeURIComponent(video.localPath)}`;
+          } else if (video.url.startsWith('/api')) {
+            videoUrl = video.url;
+          } else {
+            videoUrl = `/api/serve-video?path=${encodeURIComponent(video.localPath || video.url)}`;
+          }
+
           allVideos.push({
             id: video.id,
             type: 'video' as const,
-            url: video.url,
+            url: videoUrl,
             sceneIndex,
             timestamp: video.timestamp,
             metadata: {
@@ -150,7 +167,7 @@ export default function MediaDrawer() {
         if (!videoUrl.startsWith('http') && !videoUrl.startsWith('/api')) {
           videoUrl = `/api/serve-video?path=${encodeURIComponent(scene.videoLocalPath)}`;
         }
-        
+
         allVideos.push({
           id: `video-${sceneIndex}-legacy`,
           type: 'video' as const,
@@ -172,13 +189,19 @@ export default function MediaDrawer() {
     const allFrames: MediaItem[] = [];
     scenes.forEach((scene, sceneIndex) => {
       scene.seedFrames?.forEach((frame) => {
-        // Use S3 URL if available, otherwise use local path (served via API)
-        let frameUrl = frame.url;
-        if (!frameUrl.startsWith('http://') && !frameUrl.startsWith('https://') && !frameUrl.startsWith('/api')) {
-          // Convert local path to serveable URL
-          frameUrl = `/api/serve-image?path=${encodeURIComponent(frameUrl)}`;
+        // Always serve through API using localPath for consistent access
+        let frameUrl: string;
+        if (frame.localPath) {
+          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath)}`;
+        } else if (frame.url.startsWith('/api')) {
+          frameUrl = frame.url;
+        } else if (!frame.url.startsWith('http://') && !frame.url.startsWith('https://')) {
+          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.url)}`;
+        } else {
+          // For S3 URLs, use localPath if available
+          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath || frame.url)}`;
         }
-        
+
         allFrames.push({
           id: frame.id,
           type: 'frame' as const,
@@ -194,15 +217,19 @@ export default function MediaDrawer() {
   // Uploaded media with all processed versions
   const uploadedMedia = useMemo(() => {
     const allMedia: MediaItem[] = [];
-    
+
     if (project?.uploadedImages) {
       project.uploadedImages.forEach((uploadedImage, imgIndex) => {
-        // Add original image
-        let imageUrl = uploadedImage.url;
-        if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {
+        // Add original image - always serve through API using localPath
+        let imageUrl: string;
+        if (uploadedImage.localPath) {
+          imageUrl = `/api/serve-image?path=${encodeURIComponent(uploadedImage.localPath)}`;
+        } else if (uploadedImage.url.startsWith('/api')) {
+          imageUrl = uploadedImage.url;
+        } else {
           imageUrl = `/api/serve-image?path=${encodeURIComponent(uploadedImage.localPath || uploadedImage.url)}`;
         }
-        
+
         allMedia.push({
           id: uploadedImage.id,
           type: 'image' as const,
@@ -215,12 +242,17 @@ export default function MediaDrawer() {
           },
           timestamp: uploadedImage.createdAt,
         });
-        
+
         // Add all processed versions with labels
         if (uploadedImage.processedVersions && uploadedImage.processedVersions.length > 0) {
           uploadedImage.processedVersions.forEach((processed) => {
-            let processedUrl = processed.url;
-            if (!processedUrl.startsWith('http://') && !processedUrl.startsWith('https://') && !processedUrl.startsWith('/api')) {
+            // Always serve through API using localPath
+            let processedUrl: string;
+            if (processed.localPath) {
+              processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.localPath)}`;
+            } else if (processed.url.startsWith('/api')) {
+              processedUrl = processed.url;
+            } else {
               processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.localPath || processed.url)}`;
             }
             
@@ -261,9 +293,15 @@ export default function MediaDrawer() {
   const characterReferences = useMemo(() => {
     const refs: MediaItem[] = [];
     project?.characterReferences?.forEach((url, index) => {
-      // Convert local path to serveable URL if needed
-      let imageUrl = url;
-      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api')) {
+      // Always serve through API - character references are stored as URLs/paths
+      let imageUrl: string;
+      if (url.startsWith('/api')) {
+        imageUrl = url;
+      } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        imageUrl = `/api/serve-image?path=${encodeURIComponent(url)}`;
+      } else {
+        // For S3 or external URLs, try to proxy through API
+        // Note: This may fail if localPath isn't available
         imageUrl = `/api/serve-image?path=${encodeURIComponent(url)}`;
       }
       refs.push({
