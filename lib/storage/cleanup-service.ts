@@ -8,6 +8,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
+import { clearAllThumbnails, getThumbnailCacheStats } from './thumbnail-service';
 
 // ============================================================================
 // Types
@@ -25,6 +26,10 @@ export interface CleanupResult {
   deletedBytes: number;
   errors: string[];
   preservedFiles: number;
+}
+
+export interface ThumbnailCleanupResult {
+  clearedCount: number;
 }
 
 export interface DiskUsageInfo {
@@ -434,6 +439,7 @@ export async function runScheduledCleanup(
 ): Promise<{
   tempCleanup: Record<string, CleanupResult>;
   uploadedCleanup: CleanupResult;
+  thumbnailCleanup: ThumbnailCleanupResult;
   orphanedFiles: string[];
 }> {
   console.log('[CleanupService] Starting scheduled cleanup...');
@@ -446,18 +452,29 @@ export async function runScheduledCleanup(
   // Clean up files that have been uploaded to S3
   const uploadedCleanup = await cleanupUploadedFiles(prisma);
 
+  // Clean up thumbnail cache
+  // Get stats before cleanup for logging
+  const thumbnailStats = await getThumbnailCacheStats();
+  const thumbnailCleanedCount = await clearAllThumbnails();
+  const thumbnailCleanup: ThumbnailCleanupResult = {
+    clearedCount: thumbnailCleanedCount,
+  };
+
   // Find orphaned files (for monitoring/alerting)
   const orphanedFiles = await findOrphanedFiles(prisma);
 
   console.log('[CleanupService] Cleanup complete:', {
     projectsCleaned: Object.keys(tempCleanup).length,
     uploadedFilesCleaned: uploadedCleanup.deletedFiles,
+    thumbnailsCleaned: thumbnailCleanedCount,
+    thumbnailCacheSizeBefore: `${(thumbnailStats.totalBytes / 1024 / 1024).toFixed(2)}MB`,
     orphanedFilesFound: orphanedFiles.length,
   });
 
   return {
     tempCleanup,
     uploadedCleanup,
+    thumbnailCleanup,
     orphanedFiles,
   };
 }

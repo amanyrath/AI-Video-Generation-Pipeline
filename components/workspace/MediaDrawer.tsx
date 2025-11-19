@@ -16,6 +16,16 @@ interface MediaItem {
   metadata?: Record<string, any>;
 }
 
+// Helper to add thumbnail query param to image URLs
+function getThumbnailUrl(url: string, size: 'small' | 'medium' | 'large' = 'small'): string {
+  // Only add thumbnail param to serve-image API URLs
+  if (url.includes('/api/serve-image')) {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}thumb=${size}`;
+  }
+  return url;
+}
+
 export default function MediaDrawer() {
   const { 
     project, 
@@ -124,6 +134,10 @@ export default function MediaDrawer() {
           sceneIndex,
           prompt: img.prompt,
           timestamp: img.createdAt,
+          metadata: {
+            // Store full URL for preview modal
+            fullUrl: imageUrl,
+          },
         });
       });
     });
@@ -208,6 +222,10 @@ export default function MediaDrawer() {
           url: frameUrl,
           sceneIndex,
           timestamp: frame.timestamp.toString(),
+          metadata: {
+            // Store full URL for preview modal
+            fullUrl: frameUrl,
+          },
         });
       });
     });
@@ -239,6 +257,7 @@ export default function MediaDrawer() {
             originalName: uploadedImage.originalName,
             isOriginal: true,
             imageIndex: imgIndex,
+            fullUrl: imageUrl,
           },
           timestamp: uploadedImage.createdAt,
         });
@@ -276,6 +295,7 @@ export default function MediaDrawer() {
                 originalName: uploadedImage.originalName,
                 isProcessed: true,
                 imageIndex: imgIndex,
+                fullUrl: processedUrl,
               },
               timestamp: processed.createdAt,
             });
@@ -457,7 +477,7 @@ export default function MediaDrawer() {
           </div>
         ) : item.type === 'image' || item.type === 'frame' ? (
           <img
-            src={item.url}
+            src={getThumbnailUrl(item.url, 'small')}
             alt={item.prompt || 'Media'}
             className="w-full h-full object-cover aspect-video"
             loading="lazy"
@@ -784,11 +804,11 @@ export default function MediaDrawer() {
             </button>
             <div className="relative w-full h-full flex items-center justify-center p-4">
               <img
-                src={previewImage.url}
+                src={previewImage.metadata?.fullUrl || previewImage.url}
                 alt={previewImage.prompt || 'Preview'}
                 className="max-w-full max-h-[85vh] object-contain"
                 onError={(e) => {
-                  console.error('Failed to load preview image:', previewImage.url);
+                  console.error('Failed to load preview image:', previewImage.metadata?.fullUrl || previewImage.url);
                   const target = e.currentTarget;
                   target.style.display = 'none';
                   const parent = target.parentElement;
