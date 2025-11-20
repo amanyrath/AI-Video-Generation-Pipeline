@@ -28,6 +28,10 @@ import { uploadToS3, getS3Url } from '@/lib/storage/s3-uploader';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { config } from 'dotenv';
+
+// Load environment variables
+config({ path: '.env.local' });
 
 // ============================================================================
 // Types
