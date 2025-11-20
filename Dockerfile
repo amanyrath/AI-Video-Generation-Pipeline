@@ -21,9 +21,8 @@ RUN npm run build
 
 # Copy static assets to standalone directory
 # This is required for "output: standalone" to work correctly
-RUN mkdir -p .next/standalone/.next/static && \
-    cp -r public .next/standalone/public && \
-    cp -r .next/static .next/standalone/.next/static
+RUN cp -r public .next/standalone/ && \
+    cp -r .next/static .next/standalone/.next/
 
 # Prune dev dependencies to keep image size down
 RUN npm prune --production
