@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
-# Install FFmpeg
-RUN apk add --no-cache ffmpeg
+# Install FFmpeg and bash for startup script
+RUN apk add --no-cache ffmpeg bash
 
 WORKDIR /app
 
@@ -10,6 +10,12 @@ COPY package*.json ./
 
 # Install dependencies
 RUN npm ci
+
+# Copy Prisma schema
+COPY prisma ./prisma
+
+# Generate Prisma client
+RUN npx prisma generate
 
 # Copy application code
 COPY . .
@@ -21,5 +27,5 @@ EXPOSE 3000
 
 ENV NODE_ENV=production
 
-# Generate Prisma client at runtime and start the app
-CMD npx prisma generate && npm start
+# Start the app with migration deployment
+CMD npx prisma migrate deploy && npm start

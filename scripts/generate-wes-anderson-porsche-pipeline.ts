@@ -10,6 +10,19 @@
  * - High-quality cinematic video generation (Veo)
  */
 
+// Load environment variables (only needed for local development)
+// On Railway/cloud platforms, environment variables are injected automatically
+import { config } from 'dotenv';
+import { existsSync } from 'fs';
+
+// Only load .env.local if it exists (local development)
+if (existsSync('.env.local')) {
+  config({ path: '.env.local' });
+} else {
+  // Fallback to default .env if it exists
+  config();
+}
+
 import path from 'path';
 import fs from 'fs/promises';
 import { uploadBufferToS3, getS3Url } from '@/lib/storage/s3-uploader';
