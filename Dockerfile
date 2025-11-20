@@ -9,15 +9,18 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
 
-# Install dependencies (this layer is cached unless package files change)
-RUN npm ci --only=production && \
+# Install dependencies
+RUN npm ci && \
     npm cache clean --force
 
-# Copy application code (changes frequently, so do this last)
+# Copy application code
 COPY . .
 
-# Generate Prisma client and build (npm run build already includes prisma generate)
+# Generate Prisma client and build
 RUN npm run build
+
+# Prune dev dependencies to keep image size down
+RUN npm prune --production
 
 EXPOSE 3000
 
