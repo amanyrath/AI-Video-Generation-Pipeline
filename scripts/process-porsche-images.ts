@@ -16,7 +16,7 @@ import fsSync from 'fs';
 import path from 'path';
 import { uploadToS3, getS3Url } from '../lib/storage/s3-uploader';
 import { removeBackground } from '../lib/services/background-remover';
-import { upscaleImages, upscaleImage } from '../lib/services/image-upscaler';
+import { upscaleImage } from '../lib/services/image-upscaler';
 
 // Load environment variables from .env.local if it exists
 try {
@@ -287,7 +287,7 @@ async function main() {
     }
 
     // Step 3: Upscale the background-removed images
-    const upscaledUrls = await upscaleImages(backgroundRemovedUrls, PROJECT_ID);
+    const upscaledUrls = await upscaleImages(backgroundRemovedUrls);
 
     // Step 4: Download final processed images
     await downloadProcessedImages(upscaledUrls);

@@ -82,8 +82,7 @@ async function main() {
       WES_ANDERSON_PROMPT,
       undefined, // No seed frame for Scene 0
       PROJECT_ID,
-      SCENE_INDEX,
-      VIDEO_DURATION
+      SCENE_INDEX
     );
 
     console.log('\n========================================');

@@ -203,8 +203,7 @@ async function main() {
       VIDEO_PROMPT,
       undefined, // No seed frame for Scene 0
       PROJECT_ID,
-      SCENE_INDEX,
-      VIDEO_DURATION
+      SCENE_INDEX
     );
 
     // -------------------------------------------------------------------------
