@@ -132,56 +132,10 @@ export default function StartingScreen({
       // Continue without car info - not critical
     }
 
-    // Generate story idea
-    setGenerationStatus('Crafting your story idea...');
-    let storyIdea = prompt.trim();
-    try {
-      const ideaResponse = await fetch('/api/generate-story-idea', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initialPrompt: prompt.trim() }),
-      });
-
-      if (ideaResponse.ok) {
-        const ideaData = await ideaResponse.json();
-        if (ideaData.success && ideaData.idea) {
-          storyIdea = ideaData.idea;
-        }
-      }
-    } catch (error) {
-      console.warn('[StartingScreen] Failed to generate story idea:', error);
-      // Continue with original prompt as idea
-    }
-
-    // Generate storyboard
-    setGenerationStatus('Generating storyboard...');
-
-    // Store the idea in localStorage BEFORE storyboard generation
-    // This ensures it's available even if storyboard generation fails
-    localStorage.setItem('generatedStoryIdea', storyIdea);
-
-    try {
-      const fullPrompt = buildPrompt(storyIdea);
-      const duration = 15; // Default duration
-
-      // Create project and generate storyboard
-      const result = await createProject(fullPrompt, duration);
-
-      if (result.storyboard.success && result.storyboard.scenes) {
-        // Store in project store
-        const store = useProjectStore.getState();
-        store.createProject(fullPrompt, duration);
-        store.setStoryboard(result.storyboard.scenes);
-      }
-    } catch (error) {
-      console.error('[StartingScreen] Failed to generate storyboard:', error);
-      // Still navigate - the Your Story page can regenerate
-    }
-
-    // Navigate to your story page
+    // Navigate directly to style selection (storyboard will be generated after style is chosen)
     setIsGeneratingStoryboard(false);
     isTransitioningRef.current = false;
-    router.push(`/your-story?prompt=${encodeURIComponent(prompt.trim())}${carParams}`);
+    router.push(`/style?prompt=${encodeURIComponent(prompt.trim())}${carParams}`);
   };
 
   return (
@@ -196,7 +150,7 @@ export default function StartingScreen({
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="text-center">
             <Loader2 className="w-12 h-12 text-white animate-spin mx-auto mb-4" />
-            <p className="text-2xl text-white font-semibold mb-2">Generating Storyboard</p>
+            <p className="text-2xl text-white font-semibold mb-2">Processing</p>
             <p className="text-white/60">{generationStatus}</p>
           </div>
         </div>

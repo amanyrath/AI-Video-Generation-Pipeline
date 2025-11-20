@@ -21,6 +21,10 @@ export default function BrandIdentityScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
+  
+  // Track the most recent custom asset created in the current user session
+  // to allow batch operations to add to the same asset instead of creating multiple
+  const latestRecolorTarget = useRef<{ baseId: string, customId: string, color: string } | null>(null);
 
   // Extract suggested car info from URL params
   const suggestedCar: SuggestedCarInfo | undefined = useMemo(() => {
@@ -186,75 +190,99 @@ export default function BrandIdentityScreen() {
     router.push('/workspace');
   };
 
-  const handleAddRecoloredImage = (baseCarId: string, imageUrl: string, colorHex: string) => {
-    console.log('[BrandIdentityScreen] handleAddRecoloredImage called:', { baseCarId, imageUrl: imageUrl.substring(0, 50) + '...', colorHex });
+  const handleAddRecoloredImages = (baseCarId: string, images: Array<{ url: string, colorHex: string }>) => {
+    if (images.length === 0) return;
     
-    // Check if we're recoloring a custom asset (existing custom asset selected)
-    const existingCustomAsset = customAssets.find(asset => asset.id === baseCarId);
+    const colorHex = images[0].colorHex; // Assume all images in batch have same color
+    console.log(`[BrandIdentityScreen] Adding ${images.length} recolored images to base car ${baseCarId}`);
 
-    if (existingCustomAsset) {
-      console.log('[BrandIdentityScreen] Adding image to existing custom asset:', existingCustomAsset.name);
-      // Add recolored image to existing custom asset
-      const newImage = {
-        id: `recolored-${Date.now()}`,
-        url: imageUrl,
+    setCustomAssets(prevAssets => {
+      // 1. Check if we are targeting an existing custom asset
+      const existingCustomAsset = prevAssets.find(asset => asset.id === baseCarId);
+
+      if (existingCustomAsset) {
+        console.log('[BrandIdentityScreen] Adding images to existing custom asset:', existingCustomAsset.name);
+        
+        const newImages = images.map(img => ({
+          id: `recolored-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          url: img.url,
+          type: 'custom' as const,
+          filename: `recolored-${img.colorHex.replace('#', '')}-${Math.random().toString(36).substr(2, 5)}.jpg`,
+          alt: `${existingCustomAsset.name} recolored to ${img.colorHex}`,
+        }));
+        
+        return prevAssets.map(asset =>
+          asset.id === baseCarId
+            ? {
+                ...asset,
+                referenceImages: [...asset.referenceImages, ...newImages],
+                adjustments: [...asset.adjustments, `Recolored to ${colorHex}`],
+              }
+            : asset
+        );
+      }
+
+      // 2. Create a new custom asset for the batch
+      console.log('[BrandIdentityScreen] Creating new custom asset for batch');
+      const baseCar = carDatabase?.variants.find(car => car.id === baseCarId);
+      
+      if (!baseCar) {
+        console.error('[BrandIdentityScreen] Base car not found:', baseCarId);
+        return prevAssets;
+      }
+
+      const newCustomId = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      const newImages = images.map(img => ({
+        id: `recolored-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        url: img.url,
         type: 'custom' as const,
-        filename: `recolored-${colorHex.replace('#', '')}.jpg`,
-        alt: `${existingCustomAsset.name} recolored to ${colorHex}`,
+        filename: `recolored-${img.colorHex.replace('#', '')}-${Math.random().toString(36).substr(2, 5)}.jpg`,
+        alt: `${baseCar.displayName} recolored to ${img.colorHex}`,
+      }));
+
+      const newCustomAsset: CustomAsset = {
+        id: newCustomId,
+        name: `${baseCar.displayName} (${colorHex})`,
+        createdAt: new Date().toISOString(),
+        baseCarId,
+        s3Key: `brand/${baseCar.brand.toLowerCase()}/${baseCar.model.toLowerCase()}/custom/${Date.now()}-${colorHex.replace('#', '')}/`,
+        referenceImages: newImages,
+        adjustments: [`Recolored to ${colorHex}`],
       };
       
-      setCustomAssets(prev => prev.map(asset =>
-        asset.id === baseCarId
-          ? {
-              ...asset,
-              referenceImages: [...asset.referenceImages, newImage],
-              adjustments: [...asset.adjustments, `Recolored to ${colorHex}`],
-            }
-          : asset
-      ));
-      
-      // CRITICAL: Update selectedCar to reflect the new image
-      if (selectedCar?.id === baseCarId) {
-        setSelectedCar(prev => prev ? {
-          ...prev,
-          referenceImages: [...prev.referenceImages, newImage],
-          adjustments: 'adjustments' in prev ? [...prev.adjustments, `Recolored to ${colorHex}`] : [],
-        } as CustomAsset : null);
-      }
-      
-      console.log('[BrandIdentityScreen] Image added to existing custom asset and selectedCar updated');
-      return;
-    }
+      return [...prevAssets, newCustomAsset];
+    });
 
-    console.log('[BrandIdentityScreen] Creating new custom asset from base car:', baseCarId);
-    // Otherwise, create a new custom asset based on a standard car variant
-    const baseCar = carDatabase?.variants.find(car => car.id === baseCarId);
-    if (!baseCar) {
-      console.error('[BrandIdentityScreen] Base car not found:', baseCarId);
-      return;
-    }
+    // Sync selectedCar update (simplified - just select the last one if we made a new one, or re-select if existing)
+    // Since we can't easily know the ID of the new asset created inside the setter without complex logic,
+    // we'll just rely on the user seeing it in the list, or try to find it.
+    // Actually, to make it smooth, we can find the asset that matches our criteria after a timeout.
+    setTimeout(() => {
+       setCustomAssets(currentAssets => {
+          // Try to find the asset we just touched
+          // Either it's the baseCarId (if it was already custom)
+          let targetAsset = currentAssets.find(a => a.id === baseCarId);
+          
+          // Or it's a new one with the matching name/color
+          if (!targetAsset) {
+             // Find the most recent one with this color/base
+             // This is heuristic but likely correct for immediate UI update
+             targetAsset = currentAssets
+                .filter(a => a.baseCarId === baseCarId && a.name.includes(colorHex))
+                .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+          }
+          
+          if (targetAsset) {
+             setSelectedCar(targetAsset);
+          }
+          return currentAssets;
+       });
+    }, 50);
+  };
 
-    const newCustomAsset: CustomAsset = {
-      id: `custom-${Date.now()}`,
-      name: `${baseCar.displayName} (${colorHex})`,
-      createdAt: new Date().toISOString(),
-      baseCarId,
-      s3Key: `brand/${baseCar.brand.toLowerCase()}/${baseCar.model.toLowerCase()}/custom/${Date.now()}-${colorHex.replace('#', '')}/`,
-      referenceImages: [{
-        id: `recolored-${Date.now()}`,
-        url: imageUrl,
-        type: 'custom',
-        filename: `recolored-${colorHex.replace('#', '')}.jpg`,
-        alt: `${baseCar.displayName} recolored to ${colorHex}`,
-      }],
-      adjustments: [`Recolored to ${colorHex}`],
-    };
-
-    setCustomAssets(prev => [...prev, newCustomAsset]);
-
-    // Auto-select the new custom asset
-    setSelectedCar(newCustomAsset);
-    console.log('[BrandIdentityScreen] Created new custom asset and selected it:', newCustomAsset.name);
+  const handleAddRecoloredImage = (baseCarId: string, imageUrl: string, colorHex: string) => {
+    handleAddRecoloredImages(baseCarId, [{ url: imageUrl, colorHex }]);
   };
 
   const handleAddCustomAsset = (baseCarId: string, name: string) => {
@@ -458,7 +486,7 @@ export default function BrandIdentityScreen() {
         </button>
       </div>
 
-      <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 mt-20 mb-6">
+      <div className="relative z-10 w-full max-w-[1600px] mx-auto px-4 sm:px-6 mt-20 mb-6">
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
           <h2 className="text-3xl sm:text-4xl font-light text-white/90 tracking-tight mb-2">
@@ -470,9 +498,9 @@ export default function BrandIdentityScreen() {
         </div>
 
         {/* Two Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-8 min-h-[calc(100vh-300px)] max-h-[calc(100vh-200px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-8 h-[calc(100vh-160px)] min-h-[500px]">
           {/* Left Column - Car Selection */}
-          <div className="lg:col-span-1 h-[400px] lg:h-auto overflow-auto">
+          <div className="lg:col-span-1 h-full overflow-hidden">
             <CarSelector
               cars={carDatabase?.variants || []}
               customAssets={customAssets}
@@ -487,10 +515,11 @@ export default function BrandIdentityScreen() {
           </div>
 
           {/* Right Column - Asset Viewer */}
-          <div className="lg:col-span-2 min-h-[500px] lg:h-auto">
+          <div className="lg:col-span-3 h-full min-h-0">
             <AssetViewer
               selectedCar={selectedCar}
               onAddRecoloredImage={handleAddRecoloredImage}
+              onAddRecoloredImages={handleAddRecoloredImages}
               onAddCustomAsset={handleAddCustomAsset}
               onUploadImages={triggerFileUpload}
               onRemoveImage={handleRemoveImage}

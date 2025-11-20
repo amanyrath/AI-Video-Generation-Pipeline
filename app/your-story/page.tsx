@@ -175,6 +175,8 @@ function YourStoryContent() {
   const buildPrompt = () => {
     const lines: string[] = [];
     const idea = getIdeaFromFields();
+    const store = useProjectStore.getState();
+    const selectedStylePrompt = store.selectedStylePrompt;
 
     lines.push(
       idea.trim()
@@ -186,9 +188,12 @@ function YourStoryContent() {
       'Ad context: Performance-focused commercial for a small brand, with a strong emphasis on products and automotive advertising.'
     );
 
-    const styleLine = 'Leigh Powis–style commercial film, tight and action-driven, with bold, cinematic framing and punchy pacing.';
+    // Inject the selected style prompt if available, otherwise use default
+    const styleLine = selectedStylePrompt 
+      ? selectedStylePrompt 
+      : 'Leigh Powis–style commercial film, tight and action-driven, with bold, cinematic framing and punchy pacing.';
     lines.push(
-      `Visual style: ${styleLine} (assume this is shot on Arri Alexa by default).`
+      `Visual style: ${styleLine}${!selectedStylePrompt ? ' (assume this is shot on Arri Alexa by default).' : ''}`
     );
 
     if (idea.trim()) {
@@ -397,7 +402,7 @@ function YourStoryContent() {
 
       {/* Back Button */}
       <button
-        onClick={() => router.push('/')}
+        onClick={() => router.push('/style')}
         className="fixed top-6 right-6 z-40 px-6 py-2 bg-white/10 text-white/80 rounded-lg hover:bg-white/20 border border-white/20 backdrop-blur-sm transition-all"
       >
         Back
@@ -406,7 +411,7 @@ function YourStoryContent() {
       <div className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 mt-20 mb-6">
         {/* Header */}
         <div className="text-center mb-6 sm:mb-8">
-          <h2 className="text-3xl sm:text-4xl font-light text-white/90 tracking-tight mb-2">
+          <h2 className="text-4xl sm:text-5xl font-light text-white/90 tracking-tight mb-2">
             Your Story
           </h2>
           <p className="text-sm sm:text-base text-white/60">

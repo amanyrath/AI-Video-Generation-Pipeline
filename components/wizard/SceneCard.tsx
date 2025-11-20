@@ -152,7 +152,7 @@ export default function SceneCard({
             </div>
           ) : (
             <div>
-              <h3 className="text-base font-medium text-white leading-tight line-clamp-3">
+              <h3 className="text-lg font-medium text-white leading-tight line-clamp-3">
                 {capitalizeFirst(scene.description)}
               </h3>
               <div className="flex items-center gap-2 mt-2 text-sm text-white/40">
@@ -182,7 +182,7 @@ export default function SceneCard({
           ) : (
             <div>
               {scene.imagePrompt && (
-                <p className="text-sm text-white/60 leading-relaxed line-clamp-4">
+                <p className="text-base text-white/70 leading-relaxed line-clamp-4">
                   {scene.imagePrompt}
                 </p>
               )}
@@ -283,7 +283,7 @@ export default function SceneCard({
                   <span className="flex-shrink-0 w-4 h-4 rounded-full bg-white/10 text-[10px] font-medium text-white/60 flex items-center justify-center">
                     {subIndex + 1}
                   </span>
-                  <p className="text-[10px] text-white/70 leading-relaxed line-clamp-3">
+                  <p className="text-xs text-white/70 leading-relaxed line-clamp-3">
                     {subscene.imagePrompt}
                   </p>
                 </div>

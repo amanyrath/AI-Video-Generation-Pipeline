@@ -21,6 +21,10 @@ interface ProjectStore {
   // Project state
   project: ProjectState | null;
 
+  // Style selection state
+  selectedStyle: 'whimsical' | 'luxury' | 'offroad' | null;
+  selectedStylePrompt: string | null;
+
   // Character validation state
   needsCharacterValidation: boolean;
   hasUploadedImages: boolean;
@@ -143,11 +147,16 @@ interface ProjectStore {
   setCurrentReferenceImageUrl: (url: string) => void;
   setAssetDescription: (description: string) => void;
   
+  // Style selection management
+  setSelectedStyle: (style: 'whimsical' | 'luxury' | 'offroad', prompt: string) => void;
+  
   reset: () => void;
 }
 
 const initialState = {
   project: null,
+  selectedStyle: null as 'whimsical' | 'luxury' | 'offroad' | null,
+  selectedStylePrompt: null as string | null,
   viewMode: 'storyboard' as ViewMode,
   currentSceneIndex: 0,
   mediaDrawer: {
@@ -1014,6 +1023,14 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           assetDescription: description,
         },
       };
+    });
+  },
+  
+  // Style selection management
+  setSelectedStyle: (style: 'whimsical' | 'luxury' | 'offroad', prompt: string) => {
+    set({
+      selectedStyle: style,
+      selectedStylePrompt: prompt,
     });
   },
   

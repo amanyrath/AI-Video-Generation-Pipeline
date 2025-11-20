@@ -151,11 +151,11 @@ export async function createImagePrediction(
     // Nano-banana only accepts these specific parameters
     input = {
       prompt: prompt.trim(),
-      image_input: seedImage ? [seedImage] : [],
+      image_input: seedImage ? [seedImage, ...(referenceImageUrls || [])] : [],
       aspect_ratio: seedImage ? 'match_input_image' : '16:9',
       output_format: 'jpg', // Model default
     };
-    console.log(`${logPrefix} Using nano-banana with image_input: ${seedImage}`);
+    console.log(`${logPrefix} Using nano-banana with image_input: ${seedImage} + ${referenceImageUrls?.length || 0} reference images`);
   } else {
     // Standard parameters for other models
     input = {

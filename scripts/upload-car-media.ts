@@ -24,7 +24,7 @@
  */
 
 import { PrismaClient, CarMediaType, Prisma } from '@prisma/client';
-import { uploadToS3, getS3Url } from '@/lib/storage/s3-uploader';
+import { uploadToS3, uploadBufferToS3, getS3Url } from '@/lib/storage/s3-uploader';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
@@ -426,16 +426,18 @@ async function uploadMediaFile(
       return result;
     }
 
-    // Generate S3 key
+    // Upload to S3
     const timestamp = Date.now();
     const sanitizedFilename = mediaFile.filename.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const bucket = process.env.AWS_S3_BUCKET || 'ai-video-pipeline-outputs';
     const s3Key = `cars/${companyId}/${modelId}/${variantId}/${mediaFile.mediaType.toLowerCase()}/${timestamp}-${sanitizedFilename}`;
 
-    // Upload to S3
-    console.log(`  Uploading to S3: ${s3Key}`);
-    await uploadToS3(mediaFile.filePath, companyId, {
-      contentType: mediaFile.mimeType,
-    });
+    console.log(`  Uploading to S3 (Bucket: ${bucket}): ${s3Key}`);
+    
+    // Read file buffer
+    const fileBuffer = await fs.readFile(mediaFile.filePath);
+    
+    await uploadBufferToS3(fileBuffer, s3Key, mediaFile.mimeType);
 
     // Create database record
     await prisma.carMedia.create({
