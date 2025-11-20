@@ -11,8 +11,9 @@ COPY package*.json ./
 # Install dependencies
 RUN npm ci
 
-# Copy Prisma schema
+# Copy Prisma schema and config
 COPY prisma ./prisma
+COPY prisma.config.ts ./
 
 # Generate Prisma client
 RUN npx prisma generate
@@ -26,6 +27,7 @@ RUN npm run build
 EXPOSE 3000
 
 ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
 
 # Start the app with migration deployment
 CMD npx prisma migrate deploy && npm start
