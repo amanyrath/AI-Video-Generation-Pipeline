@@ -7,7 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { generateStoryboard, createErrorResponse } from '@/lib/ai/storyboard-generator';
+import { generateStoryboard, createErrorResponse, setRuntimeTextModel } from '@/lib/ai/storyboard-generator';
 import { StoryboardRequest, StoryboardResponse } from '@/lib/types';
 
 // ============================================================================
@@ -70,6 +70,13 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
   try {
+    // Check for runtime model override in headers
+    const runtimeTextModel = request.headers.get('X-Model-Text');
+    if (runtimeTextModel) {
+      setRuntimeTextModel(runtimeTextModel);
+      console.log(`[Storyboard API] Using runtime model: ${runtimeTextModel}`);
+    }
+
     // Parse request body
     let body: StoryboardRequest;
     try {
@@ -103,10 +110,12 @@ export async function POST(request: NextRequest) {
     // Extract parameters
     const prompt = body.prompt.trim();
     const targetDuration = body.targetDuration || 15;
+    const referenceImageUrls = body.referenceImageUrls || [];
 
     console.log('[Storyboard API] Request received:', {
       prompt: prompt.substring(0, 50) + '...',
       targetDuration,
+      referenceImageCount: referenceImageUrls.length,
     });
 
     // Check for API key
@@ -123,7 +132,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate storyboard
-    const scenes = await generateStoryboard(prompt, targetDuration);
+    const scenes = await generateStoryboard(prompt, targetDuration, referenceImageUrls);
 
     const duration = Date.now() - startTime;
     console.log(`[Storyboard API] Successfully generated storyboard in ${duration}ms`);
@@ -146,6 +155,8 @@ export async function POST(request: NextRequest) {
     let statusCode = 500;
     if (errorResponse.code === 'INVALID_REQUEST') {
       statusCode = 400;
+    } else if (errorResponse.code === 'AUTHENTICATION_FAILED') {
+      statusCode = 401; // Authentication errors should return 401
     } else if (errorResponse.code === 'RATE_LIMIT') {
       statusCode = 503;
     } else if (errorResponse.retryable) {

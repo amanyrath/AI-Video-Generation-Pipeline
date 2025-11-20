@@ -1,8 +1,8 @@
 /**
  * Image Generator - Replicate Integration
  * 
- * This module handles image generation using Replicate's Flux-schnell model.
- * Supports both text-to-image and image-to-image generation.
+ * This module handles image generation using Replicate's Flux-dev model.
+ * Supports text-to-image, image-to-image, and reference image consistency via IP-Adapter.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -10,16 +10,28 @@ import Replicate from 'replicate';
 import fs from 'fs/promises';
 import path from 'path';
 import { GeneratedImage } from '../types';
+import { IMAGE_CONFIG } from '@/lib/config/ai-models';
+import { getStorageService, type StoredFile } from '@/lib/storage/storage-service';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const REPLICATE_MODEL = 'black-forest-labs/flux-schnell';
-const MAX_RETRIES = 3;
-const POLL_INTERVAL = 2000; // 2 seconds
-const MAX_POLL_ATTEMPTS = 15; // 30 seconds total (15 * 2s)
+let REPLICATE_MODEL = IMAGE_CONFIG.model; // Default model, can be overridden
+const MAX_RETRIES = IMAGE_CONFIG.maxRetries;
+const POLL_INTERVAL = IMAGE_CONFIG.pollInterval;
+const MAX_POLL_ATTEMPTS = Math.floor(IMAGE_CONFIG.pollTimeout / IMAGE_CONFIG.pollInterval);
 const DOWNLOAD_RETRIES = 3;
+const DEFAULT_IP_ADAPTER_SCALE = 1.0; // Control reference image influence (0-1, default 1.0 for maximum reference image influence)
+
+/**
+ * Sets the runtime model override for image generation
+ * This allows the dev panel to dynamically change the model
+ */
+export function setRuntimeImageModel(model: string) {
+  REPLICATE_MODEL = model;
+  console.log(`[Image Generator] Runtime model set to: ${model}`);
+}
 
 // ============================================================================
 // Types
@@ -36,12 +48,16 @@ interface ReplicatePrediction {
 
 interface ReplicateInput {
   prompt: string;
-  go_fast?: boolean;
   num_outputs?: number;
   aspect_ratio?: string;
   output_format?: string;
   output_quality?: number;
   image?: string; // For image-to-image
+  image_input?: string[]; // For nano-banana model
+  ip_adapter_images?: string[]; // For IP-Adapter reference images (FLUX models)
+  ip_adapter_scale?: number; // Control how strongly to follow reference (0-1, default 0.7)
+  reference_images?: string[]; // For Gen-4 Image models (Runway Gen-4 Image)
+  [key: string]: any; // Allow additional model-specific parameters
 }
 
 // ============================================================================
@@ -77,11 +93,15 @@ function createReplicateClient(): Replicate {
  * Creates an image prediction on Replicate
  * @param prompt Image generation prompt
  * @param seedImage Optional seed image URL for image-to-image generation
+ * @param referenceImageUrls Optional array of reference image URLs for IP-Adapter (object consistency)
+ * @param ipAdapterScale Optional IP-Adapter scale (0-1, default 0.7)
  * @returns Prediction ID
  */
 export async function createImagePrediction(
   prompt: string,
-  seedImage?: string
+  seedImage?: string,
+  referenceImageUrls?: string[],
+  ipAdapterScale?: number
 ): Promise<string> {
   // Validate inputs
   if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
@@ -92,33 +112,78 @@ export async function createImagePrediction(
     throw new Error('Seed image must be a valid URL string if provided');
   }
 
+  if (referenceImageUrls && !Array.isArray(referenceImageUrls)) {
+    throw new Error('Reference image URLs must be an array if provided');
+  }
+
   const logPrefix = '[ImageGenerator]';
+  const timestamp = new Date().toISOString();
   console.log(`${logPrefix} ========================================`);
   console.log(`${logPrefix} Creating image prediction`);
-  console.log(`${logPrefix} Prompt: "${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}"`);
+  console.log(`${logPrefix} Timestamp: ${timestamp}`);
+  console.log(`${logPrefix} Model: ${REPLICATE_MODEL}`);
+  console.log(`${logPrefix} Prompt: "${prompt}"`);
+
   if (seedImage) {
-    console.log(`${logPrefix} Seed image: ${seedImage.substring(0, 80)}${seedImage.length > 80 ? '...' : ''}`);
+    console.log(`${logPrefix} Seed image: ${seedImage}`);
     console.log(`${logPrefix} Mode: image-to-image`);
+  } else if (referenceImageUrls && referenceImageUrls.length > 0) {
+    console.log(`${logPrefix} Reference images (${referenceImageUrls.length}):`);
+    referenceImageUrls.forEach((url, idx) => {
+      console.log(`${logPrefix}   [${idx + 1}] ${url}`);
+    });
+    console.log(`${logPrefix} IP-Adapter scale: ${ipAdapterScale ?? DEFAULT_IP_ADAPTER_SCALE}`);
+    console.log(`${logPrefix} Mode: text-to-image with IP-Adapter`);
   } else {
     console.log(`${logPrefix} Mode: text-to-image`);
   }
-  console.log(`${logPrefix} Timestamp: ${new Date().toISOString()}`);
 
   const replicate = createReplicateClient();
 
-  // Build input parameters according to PRD
-  const input: ReplicateInput = {
-    prompt: prompt.trim(),
-    go_fast: true, // Enable fp8 optimization for speed
-    num_outputs: 1,
-    aspect_ratio: '16:9',
-    output_format: 'png',
-    output_quality: 90,
-  };
+  // Detect model types for different parameter handling
+  const isGen4Image = REPLICATE_MODEL.includes('gen4-image');
+  const isNanoBanana = REPLICATE_MODEL.includes('nano-banana');
 
-  // Add seed image if provided (for image-to-image)
-  if (seedImage) {
-    input.image = seedImage;
+  // Build input parameters - model-specific
+  let input: ReplicateInput;
+
+  if (isNanoBanana) {
+    // Nano-banana only accepts these specific parameters
+    input = {
+      prompt: prompt.trim(),
+      image_input: seedImage ? [seedImage] : [],
+      aspect_ratio: seedImage ? 'match_input_image' : '16:9',
+      output_format: 'jpg', // Model default
+    };
+    console.log(`${logPrefix} Using nano-banana with image_input: ${seedImage}`);
+  } else {
+    // Standard parameters for other models
+    input = {
+      prompt: prompt.trim(),
+      num_outputs: 1,
+      aspect_ratio: '16:9',
+      output_format: 'png',
+      output_quality: 90,
+    };
+
+    // Add seed image for non-nano-banana models
+    if (seedImage) {
+      input.image = seedImage;
+    }
+  }
+
+  // Add reference images - only for non-nano-banana models
+  if (!isNanoBanana && referenceImageUrls && referenceImageUrls.length > 0) {
+    if (isGen4Image) {
+      // Gen-4 Image models use reference_images parameter
+      input.reference_images = referenceImageUrls;
+      console.log(`${logPrefix} Using Gen-4 Image reference_images with ${referenceImageUrls.length} reference image(s) for object consistency`);
+    } else {
+      // FLUX models use IP-Adapter
+    input.ip_adapter_images = referenceImageUrls;
+    input.ip_adapter_scale = ipAdapterScale ?? DEFAULT_IP_ADAPTER_SCALE;
+    console.log(`${logPrefix} Using IP-Adapter with ${referenceImageUrls.length} reference image(s) for object consistency`);
+    }
   }
 
   try {
@@ -196,13 +261,17 @@ async function retryWithBackoff<T>(
  * Creates an image prediction with retry logic
  * @param prompt Image generation prompt
  * @param seedImage Optional seed image URL
+ * @param referenceImageUrls Optional array of reference image URLs for IP-Adapter
+ * @param ipAdapterScale Optional IP-Adapter scale (0-1)
  * @returns Prediction ID
  */
 export async function createImagePredictionWithRetry(
   prompt: string,
-  seedImage?: string
+  seedImage?: string,
+  referenceImageUrls?: string[],
+  ipAdapterScale?: number
 ): Promise<string> {
-  return retryWithBackoff(() => createImagePrediction(prompt, seedImage));
+  return retryWithBackoff(() => createImagePrediction(prompt, seedImage, referenceImageUrls, ipAdapterScale));
 }
 
 // ============================================================================
@@ -349,11 +418,18 @@ export async function downloadAndSaveImage(
   // Generate image ID
   const imageId = uuidv4();
 
-  // Build file path: /tmp/projects/{projectId}/images/scene-{sceneIndex}-{imageId}.png
+  // Extract model name from REPLICATE_MODEL for filename
+  // e.g., "black-forest-labs/flux-1.1-pro" -> "flux-1.1-pro"
+  const modelName = REPLICATE_MODEL.split('/').pop()?.split(':')[0] || 'unknown';
+  const sanitizedModelName = modelName.replace(/[^a-zA-Z0-9.-]/g, '-');
+
+  // Build file path: /tmp/projects/{projectId}/images/scene-{sceneIndex}-{modelName}-{imageId}.png
   const projectDir = path.join('/tmp', 'projects', projectId);
   const imagesDir = path.join(projectDir, 'images');
-  const filename = `scene-${sceneIndex}-${imageId}.png`;
+  const filename = `scene-${sceneIndex}-${sanitizedModelName}-${imageId}.png`;
   const filePath = path.join(imagesDir, filename);
+
+  console.log(`[ImageGenerator] Using model: ${REPLICATE_MODEL} (${sanitizedModelName})`);
 
   // Create directories if they don't exist
   try {
@@ -412,38 +488,42 @@ export async function downloadAndSaveImage(
     }
   }
 
-  // Save image to filesystem
+  // Use storage service to save and upload to S3
   try {
-    await fs.writeFile(filePath, imageBuffer!);
+    const storageService = getStorageService();
+    const storedFile = await storageService.storeFile(imageBuffer!, {
+      projectId,
+      category: 'generated-images',
+      mimeType: 'image/png',
+      customFilename: filename,
+    }, {
+      keepLocal: true, // Keep local for potential FFmpeg operations
+    });
+
     const logPrefix = '[ImageGenerator]';
-    console.log(`${logPrefix} Image saved successfully`);
-    console.log(`${logPrefix} File path: ${filePath}`);
-
-    // Verify file was written
-    const stats = await fs.stat(filePath);
-    if (stats.size === 0) {
-      throw new Error('Saved image file is empty');
-    }
-
-    console.log(`${logPrefix} File size: ${stats.size} bytes (${(stats.size / 1024).toFixed(2)} KB)`);
+    console.log(`${logPrefix} Image saved and uploaded successfully`);
+    console.log(`${logPrefix} Local path: ${storedFile.localPath}`);
+    console.log(`${logPrefix} S3 Key: ${storedFile.s3Key}`);
+    console.log(`${logPrefix} File size: ${storedFile.size} bytes (${(storedFile.size / 1024).toFixed(2)} KB)`);
     console.log(`${logPrefix} Image ID: ${imageId}`);
     console.log(`${logPrefix} ========================================`);
+
+    // Create GeneratedImage object with S3 URL as primary
+    const generatedImage: GeneratedImage = {
+      id: imageId,
+      url: storedFile.url, // S3 URL for frontend access
+      localPath: storedFile.localPath, // Full absolute path for server-side use
+      s3Key: storedFile.s3Key, // S3 key for database storage
+      prompt: '', // Will be set by caller
+      replicateId: '', // Will be set by caller
+      createdAt: new Date().toISOString(),
+    };
+
+    return generatedImage;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(`Failed to save image to ${filePath}: ${errorMessage}`);
+    throw new Error(`Failed to save image: ${errorMessage}`);
   }
-
-  // Create GeneratedImage object
-  const generatedImage: GeneratedImage = {
-    id: imageId,
-    url: filePath, // Absolute path for internal use (same as localPath)
-    localPath: filePath, // Full absolute path
-    prompt: '', // Will be set by caller
-    replicateId: '', // Will be set by caller
-    createdAt: new Date().toISOString(),
-  };
-
-  return generatedImage;
 }
 
 /**
@@ -474,13 +554,17 @@ export async function downloadAndSaveImageWithRetry(
  * @param projectId Project ID for file organization
  * @param sceneIndex Scene index (0-4)
  * @param seedImage Optional seed image URL for image-to-image generation
+ * @param referenceImageUrls Optional array of reference image URLs for IP-Adapter (object consistency)
+ * @param ipAdapterScale Optional IP-Adapter scale (0-1, default 0.7)
  * @returns GeneratedImage object
  */
 export async function generateImage(
   prompt: string,
   projectId: string,
   sceneIndex: number,
-  seedImage?: string
+  seedImage?: string,
+  referenceImageUrls?: string[],
+  ipAdapterScale?: number
 ): Promise<GeneratedImage> {
   const logPrefix = '[ImageGenerator]';
   console.log(`${logPrefix} ========================================`);
@@ -491,11 +575,14 @@ export async function generateImage(
   if (seedImage) {
     console.log(`${logPrefix} Using seed image for image-to-image generation`);
   }
+  if (referenceImageUrls && referenceImageUrls.length > 0) {
+    console.log(`${logPrefix} Using ${referenceImageUrls.length} reference image(s) for object consistency`);
+  }
   const flowStartTime = Date.now();
 
   try {
     // Step 1: Create prediction
-    const predictionId = await createImagePredictionWithRetry(prompt, seedImage);
+    const predictionId = await createImagePredictionWithRetry(prompt, seedImage, referenceImageUrls, ipAdapterScale);
     const step1Time = Date.now();
     console.log(`${logPrefix} Step 1/3 completed in ${step1Time - flowStartTime}ms: Prediction created (ID: ${predictionId})`);
 

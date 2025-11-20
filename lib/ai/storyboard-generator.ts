@@ -6,45 +6,95 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { Scene, StoryboardResponse } from '../types';
+import fs from 'fs';
+import { Scene, Subscene, StoryboardResponse } from '../types';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = 'openai/gpt-4o';
+// Try gpt-4o-mini first as fallback if gpt-4o is not available
+let OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1 second
 
 /**
+ * Sets the runtime model override for text/storyboard generation
+ * This allows the dev panel to dynamically change the model
+ */
+export function setRuntimeTextModel(model: string) {
+  OPENROUTER_MODEL = model;
+  console.log(`[Storyboard Generator] Runtime model set to: ${model}`);
+}
+
+/**
  * System prompt for storyboard generation
  * From PRD Appendix: Prompt Templates
+ *
+ * Updated to enforce SHORT, concise scene descriptions for advertising, with a default
+ * bias toward product and automotive work and an Arri Alexa commercial look.
  */
-const STORYBOARD_SYSTEM_PROMPT = `You are a professional video storyboard creator specializing in advertising content.
+const STORYBOARD_SYSTEM_PROMPT = `You are a professional video storyboard creator specializing in performance-focused advertising,
+with particular strength in product and automotive commercials.
 
-Given a product description and ad goal, create exactly 5 scenes that tell a compelling visual story.
+Given a short creative brief for a video advertisement, create exactly 5 scenes. Each scene must have exactly 3 subscenes that break down the scene's action into a mini-narrative arc.
 
-Each scene should:
-- Be 2-4 seconds long
-- Have a clear visual focus
-- Connect logically to the next scene
-- Include detailed image generation prompts
+For each scene:
+- Total duration: 3 seconds (1 second per subscene)
+- Clear visual focus and logical progression from the previous scene
+- Keep the scene description SHORT and CONCISE - 3-6 words maximum
 
-Output format:
+For each subscene within a scene:
+- Duration: 1 second
+- Should progress the scene's story (beginning, middle, end of the moment)
+- Keep the subscene description SHORT - 2-4 words
+- Provide detailed imagePrompt for visual generation
+
+Scene description examples:
+"driver close-up", "wide car approach", "interior cockpit", "engine roar", "hero product shot"
+
+Subscene description examples (for a "driver close-up" scene):
+- Subscene 0: "eyes focus"
+- Subscene 1: "hands grip wheel"
+- Subscene 2: "determined expression"
+
+Unless the brief clearly specifies otherwise, assume:
+- The spot is shot on Arri Alexa with a high-end commercial finish
+- The goal is to showcase the product or vehicle in a bold, cinematic way
+
+Output strictly valid JSON in this format:
 {
   "scenes": [
     {
       "order": 0,
-      "description": "Brief narrative description",
-      "imagePrompt": "Detailed prompt for image generation with style, lighting, composition",
-      "duration": 3
+      "description": "Short 3-6 word phrase describing the scene",
+      "subscenes": [
+        {
+          "order": 0,
+          "description": "Short 2-4 word subscene description",
+          "imagePrompt": "Detailed prompt for image generation including shot type, subject, action, style, lighting, composition.",
+          "duration": 1
+        },
+        {
+          "order": 1,
+          "description": "Short 2-4 word subscene description",
+          "imagePrompt": "Detailed prompt for image generation...",
+          "duration": 1
+        },
+        {
+          "order": 2,
+          "description": "Short 2-4 word subscene description",
+          "imagePrompt": "Detailed prompt for image generation...",
+          "duration": 1
+        }
+      ]
     },
     ...
   ]
 }
 
-Keep prompts visual and specific. Avoid abstract concepts.`;
+Keep image prompts specific, visual, and production-ready. Each subscene should feel like a natural progression within its parent scene.`;
 
 // ============================================================================
 // Types
@@ -54,7 +104,13 @@ interface OpenRouterRequest {
   model: string;
   messages: Array<{
     role: 'system' | 'user';
-    content: string;
+    content: string | Array<{
+      type: 'text' | 'image_url';
+      text?: string;
+      image_url?: {
+        url: string;
+      };
+    }>;
   }>;
   response_format: {
     type: 'json_object';
@@ -77,12 +133,21 @@ interface OpenRouterResponse {
   };
 }
 
+interface RawSubscene {
+  order: number;
+  description: string;
+  imagePrompt: string;
+  duration: number;
+}
+
 interface RawStoryboardResponse {
   scenes: Array<{
     order: number;
     description: string;
-    imagePrompt: string;
-    duration: number;
+    subscenes: RawSubscene[];
+    // Legacy field for backward compatibility
+    imagePrompt?: string;
+    duration?: number;
   }>;
 }
 
@@ -94,11 +159,13 @@ interface RawStoryboardResponse {
  * Calls OpenRouter API to generate storyboard
  * @param prompt User's product/ad description
  * @param targetDuration Target video duration in seconds (default: 15)
+ * @param referenceImageUrls Optional array of reference image URLs
  * @returns Raw JSON response from OpenRouter
  */
 async function callOpenRouterAPI(
   prompt: string,
-  targetDuration: number = 15
+  targetDuration: number = 15,
+  referenceImageUrls?: string[]
 ): Promise<OpenRouterResponse> {
   const apiKey = process.env.OPENROUTER_API_KEY;
 
@@ -111,9 +178,79 @@ async function callOpenRouterAPI(
     console.warn('[OpenRouter] API key format may be invalid. Expected format: sk-or-v1-... or sk-...');
   }
 
-  const userPrompt = `Create exactly 5 scenes for a ${targetDuration}-second video advertisement: ${prompt}
+  const userPrompt = `You are creating a performance-focused advertising storyboard (with strong support for product and automotive spots) for a ${targetDuration}-second video ad.
+
+Creative brief from the user:
+${prompt}
+
+Use the structure [SHOT TYPE] + [SUBJECT] + [ACTION] + [STYLE] + [CAMERA MOVEMENT] + [AUDIO CUES] for each of the 5 scene descriptions.
 
 Ensure the total duration of all scenes equals ${targetDuration} seconds (±2 seconds tolerance).`;
+
+  // Build user message content
+  // If reference images are provided, include them in the message
+  const userMessageContent: any[] = [];
+  
+  // Add text prompt
+  userMessageContent.push({
+    type: 'text',
+    text: userPrompt + (referenceImageUrls && referenceImageUrls.length > 0 
+      ? `\n\nReference images have been provided. Use them to understand the visual style, color palette, composition, and overall aesthetic. Incorporate these visual elements into the storyboard scenes.`
+      : ''),
+  });
+
+  // Add reference images if provided
+  if (referenceImageUrls && referenceImageUrls.length > 0) {
+    for (const imageUrl of referenceImageUrls) {
+      // OpenRouter needs publicly accessible URLs or base64 data URLs
+      // We need to convert both local paths AND S3 URLs to base64 because:
+      // 1. S3 URLs may not be publicly accessible (403 errors)
+      // 2. Local paths need to be read from filesystem
+      let imageUrlForAPI = imageUrl;
+      
+      // Check if it's a local file path OR an S3 URL
+      if (imageUrl.startsWith('/tmp') || imageUrl.startsWith('./') || !imageUrl.startsWith('http')) {
+        // Local paths: read directly from filesystem
+        try {
+          const imageBuffer = fs.readFileSync(imageUrl);
+          const base64Image = imageBuffer.toString('base64');
+          const mimeType = imageUrl.endsWith('.png') ? 'image/png' : 'image/jpeg';
+          imageUrlForAPI = `data:${mimeType};base64,${base64Image}`;
+          console.log(`[Storyboard] Converted local path to base64: ${imageUrl.substring(0, 50)}...`);
+        } catch (error) {
+          console.warn(`[Storyboard] Failed to read local image ${imageUrl}, skipping:`, error);
+          continue; // Skip this image if we can't read it
+        }
+      } else if (imageUrl.includes('s3.amazonaws.com') || imageUrl.includes('s3.')) {
+        // S3 URLs: download and convert to base64 to avoid 403 errors
+        try {
+          console.log(`[Storyboard] Downloading S3 image for base64 conversion: ${imageUrl.substring(0, 50)}...`);
+          const response = await fetch(imageUrl);
+          if (!response.ok) {
+            console.warn(`[Storyboard] Failed to download S3 image (${response.status}), skipping: ${imageUrl}`);
+            continue;
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const base64Image = buffer.toString('base64');
+          const mimeType = imageUrl.endsWith('.png') ? 'image/png' : 'image/jpeg';
+          imageUrlForAPI = `data:${mimeType};base64,${base64Image}`;
+          console.log(`[Storyboard] Successfully converted S3 image to base64`);
+        } catch (error) {
+          console.warn(`[Storyboard] Failed to download S3 image ${imageUrl}, skipping:`, error);
+          continue;
+        }
+      }
+      // Otherwise, use the URL as-is (for publicly accessible URLs)
+      
+      userMessageContent.push({
+        type: 'image_url',
+        image_url: {
+          url: imageUrlForAPI,
+        },
+      });
+    }
+  }
 
   const requestBody: OpenRouterRequest = {
     model: OPENROUTER_MODEL,
@@ -124,7 +261,9 @@ Ensure the total duration of all scenes equals ${targetDuration} seconds (±2 se
       },
       {
         role: 'user',
-        content: userPrompt,
+        content: userMessageContent.length === 1 && userMessageContent[0].type === 'text'
+          ? userMessageContent[0].text
+          : userMessageContent, // Use array format for multimodal content
       },
     ],
     response_format: {
@@ -244,12 +383,38 @@ function validateStoryboardResponse(
     if (typeof scene.description !== 'string' || scene.description.trim() === '') {
       throw new Error(`Scene ${index}: missing or invalid description field`);
     }
-    if (typeof scene.imagePrompt !== 'string' || scene.imagePrompt.trim() === '') {
-      throw new Error(`Scene ${index}: missing or invalid imagePrompt field`);
+
+    // Validate subscenes
+    if (!scene.subscenes || !Array.isArray(scene.subscenes) || scene.subscenes.length !== 3) {
+      throw new Error(`Scene ${index}: must have exactly 3 subscenes, got ${scene.subscenes?.length || 0}`);
     }
-    if (typeof scene.duration !== 'number' || scene.duration < 1 || scene.duration > 10) {
-      throw new Error(`Scene ${index}: missing or invalid duration field (must be 1-10 seconds)`);
-    }
+
+    // Validate each subscene
+    const validatedSubscenes = scene.subscenes.map((subscene, subIndex) => {
+      if (typeof subscene.order !== 'number') {
+        throw new Error(`Scene ${index}, Subscene ${subIndex}: missing or invalid order field`);
+      }
+      if (typeof subscene.description !== 'string' || subscene.description.trim() === '') {
+        throw new Error(`Scene ${index}, Subscene ${subIndex}: missing or invalid description field`);
+      }
+      if (typeof subscene.imagePrompt !== 'string' || subscene.imagePrompt.trim() === '') {
+        throw new Error(`Scene ${index}, Subscene ${subIndex}: missing or invalid imagePrompt field`);
+      }
+      if (typeof subscene.duration !== 'number' || subscene.duration < 0.5 || subscene.duration > 5) {
+        throw new Error(`Scene ${index}, Subscene ${subIndex}: invalid duration (must be 0.5-5 seconds)`);
+      }
+
+      return {
+        id: uuidv4(),
+        order: subIndex,
+        description: subscene.description.trim(),
+        imagePrompt: subscene.imagePrompt.trim(),
+        suggestedDuration: subscene.duration,
+      };
+    });
+
+    // Calculate total scene duration from subscenes
+    const sceneDuration = validatedSubscenes.reduce((sum, sub) => sum + sub.suggestedDuration, 0);
 
     // Validate order matches index
     if (scene.order !== index) {
@@ -261,10 +426,12 @@ function validateStoryboardResponse(
     // Generate UUID for scene
     return {
       id: uuidv4(),
-      order: index, // Use index to ensure correct ordering
+      order: index,
       description: scene.description.trim(),
-      imagePrompt: scene.imagePrompt.trim(),
-      suggestedDuration: scene.duration,
+      subscenes: validatedSubscenes,
+      suggestedDuration: sceneDuration,
+      // Legacy field for backward compatibility - use first subscene's prompt
+      imagePrompt: validatedSubscenes[0].imagePrompt,
     };
   });
 
@@ -343,11 +510,13 @@ async function retryWithBackoff<T>(
  * Generates a 5-scene storyboard from a user prompt
  * @param prompt User's product/ad description
  * @param targetDuration Target video duration in seconds (default: 15)
+ * @param referenceImageUrls Optional array of reference image URLs for visual context
  * @returns Array of 5 validated scenes with UUIDs
  */
 export async function generateStoryboard(
   prompt: string,
-  targetDuration: number = 15
+  targetDuration: number = 15,
+  referenceImageUrls?: string[]
 ): Promise<Scene[]> {
   // Validate inputs
   if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
@@ -368,7 +537,7 @@ export async function generateStoryboard(
   // Retry logic with exponential backoff
   const scenes = await retryWithBackoff(async () => {
     // Call OpenRouter API
-    const apiResponse = await callOpenRouterAPI(prompt, targetDuration);
+    const apiResponse = await callOpenRouterAPI(prompt, targetDuration, referenceImageUrls);
 
     // Extract JSON content from response
     const content = apiResponse.choices[0]?.message?.content;
@@ -501,7 +670,7 @@ function getErrorCode(error: unknown): 'INVALID_REQUEST' | 'GENERATION_FAILED' |
     return 'RATE_LIMIT';
   }
 
-  if (errorMessage.includes('authentication') || errorMessage.includes('api key')) {
+  if (errorMessage.includes('authentication') || errorMessage.includes('api key') || errorMessage.includes('user not found') || errorMessage.includes('status: 401')) {
     return 'AUTHENTICATION_FAILED';
   }
 
@@ -537,4 +706,3 @@ export function createErrorResponse(error: unknown): StoryboardResponse {
     retryable,
   };
 }
-
