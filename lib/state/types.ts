@@ -24,7 +24,7 @@ export interface ProjectCoreSlice {
   updateProjectMetadata: (updates: {
     name?: string;
     characterDescription?: string;
-    status?: 'storyboard' | 'scene_generation' | 'stitching' | 'completed';
+    status?: 'STORYBOARD' | 'SCENE_GENERATION' | 'STITCHING' | 'COMPLETED';
     finalVideoUrl?: string;
     finalVideoS3Key?: string;
   }) => Promise<void>;
@@ -107,6 +107,9 @@ export interface SceneSlice {
   setSceneError: (sceneIndex: number, error: { message: string; retryable: boolean }) => void;
   clearSceneError: (sceneIndex: number) => void;
   retrySceneGeneration: (sceneIndex: number) => Promise<void>;
+
+  // Scene duplication
+  duplicateScene: (sceneIndex: number) => Promise<Scene>;
 }
 
 export interface TimelineSlice {
