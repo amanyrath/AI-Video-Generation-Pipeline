@@ -18,10 +18,11 @@ export interface ChatMessage {
 // UI State Types
 // ============================================================================
 
-export type ViewMode = 'storyboard' | 'timeline' | 'editor';
+export type ViewMode = 'storyboard' | 'timeline' | 'images' | 'video';
 
 export interface MediaDrawerState {
   selectedItems: string[];
+  seedImageId?: string | null; // Added for seed image selection
   filters: {
     scene?: number;
     type?: 'image' | 'video' | 'frame';

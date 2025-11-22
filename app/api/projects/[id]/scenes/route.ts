@@ -75,6 +75,7 @@ export async function POST(
             sceneTitle: sceneData.sceneTitle,
             sceneSummary: sceneData.sceneSummary,
             imagePrompt: sceneData.imagePrompt,
+            videoPrompt: sceneData.videoPrompt || sceneData.imagePrompt, // Fallback to imagePrompt for backward compatibility
             suggestedDuration: sceneData.suggestedDuration,
             negativePrompt: sceneData.negativePrompt,
             customDuration: sceneData.customDuration,
@@ -137,6 +138,7 @@ export async function PUT(
               sceneTitle: sceneData.sceneTitle,
               sceneSummary: sceneData.sceneSummary,
               imagePrompt: sceneData.imagePrompt,
+              videoPrompt: sceneData.videoPrompt || sceneData.imagePrompt, // Fallback to imagePrompt
               suggestedDuration: sceneData.suggestedDuration,
               negativePrompt: sceneData.negativePrompt,
               customDuration: sceneData.customDuration,
