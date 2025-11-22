@@ -588,12 +588,12 @@ export default function MediaDrawer() {
     if (item.sceneIndex !== undefined) {
       setCurrentSceneIndex(item.sceneIndex);
       setViewMode('video');
-      
+
       // If it's an image, select it for the scene
       if (item.type === 'image') {
         selectImage(item.sceneIndex, item.id);
       }
-      
+
       // If it's a video, toggle selection (deselect if already selected)
       if (item.type === 'video' && item.sceneIndex !== undefined) {
         const scene = scenes[item.sceneIndex];
@@ -867,6 +867,7 @@ export default function MediaDrawer() {
     skipSceneFilter: boolean = false
   ) => {
     const isExpanded = expandedSections[sectionKey];
+    const [isDragOver, setIsDragOver] = useState(false);
     const filteredItems = items.filter((item) => {
       if (mediaDrawer.searchQuery) {
         const query = mediaDrawer.searchQuery.toLowerCase();
@@ -996,7 +997,7 @@ export default function MediaDrawer() {
         {/* Character References */}
         {characterReferences.length > 0 && renderSection(
           'Character References',
-          'character-refs',
+          'characterRefs',
           characterReferences,
           <ImageIcon className="w-4 h-4" />,
           'No character references',
