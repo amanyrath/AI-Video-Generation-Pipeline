@@ -1351,3 +1351,91 @@ export async function generateMusicAndWait(
   };
 }
 
+// ============================================================================
+// Narration Generation
+// ============================================================================
+
+export type NarrationVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
+
+export interface NarrationGenerationOptions {
+  text: string;
+  voice?: NarrationVoice;
+  speed?: number; // 0.25 to 4.0, default 1.0
+  projectId: string;
+}
+
+export interface NarrationGenerationResponse {
+  success: boolean;
+  data?: {
+    audioUrl: string;
+    localPath: string;
+    duration: number;
+    voice: NarrationVoice;
+    text: string;
+  };
+  error?: string;
+}
+
+export interface NarrationVoiceInfo {
+  name: string;
+  description: string;
+}
+
+export interface NarrationServiceStatus {
+  status: string;
+  service: string;
+  model: string;
+  via: string;
+  available: boolean;
+  voices: Record<NarrationVoice, NarrationVoiceInfo>;
+  supportedSpeeds: {
+    min: number;
+    max: number;
+    default: number;
+  };
+}
+
+/**
+ * Generate narration audio from text using OpenAI TTS HD
+ */
+export async function generateNarration(
+  options: NarrationGenerationOptions
+): Promise<NarrationGenerationResponse> {
+  const url = `${API_BASE_URL}/api/generate-narration`;
+  return retryRequest(async () => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(options),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to generate narration' }));
+      throw new Error(error.error || 'Failed to generate narration');
+    }
+
+    return response.json();
+  }, DEFAULT_RETRY_CONFIG, { method: 'POST', url });
+}
+
+/**
+ * Get narration service status and available voices
+ */
+export async function getNarrationServiceStatus(): Promise<NarrationServiceStatus> {
+  const url = `${API_BASE_URL}/api/generate-narration`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to get narration service status');
+  }
+
+  return response.json();
+}
+

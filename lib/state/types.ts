@@ -1,4 +1,4 @@
-import { ProjectState, Scene, SceneWithState, GeneratedImage, GeneratedVideo, SeedFrame, AngleType, TimelineClip, AudioTrack, ImageTrack, TextOverlay } from '@/lib/types';
+import { ProjectState, Scene, SceneWithState, GeneratedImage, GeneratedVideo, SeedFrame, AngleType, TimelineClip, AudioTrack, ImageTrack, TextOverlay, NarrationTrack, NarrationVoice } from '@/lib/types';
 import { ViewMode, MediaDrawerState, DragDropState, ChatMessage } from '@/lib/types/components';
 import { UploadedImage } from '@/lib/storage/image-storage';
 
@@ -155,6 +155,14 @@ export interface TimelineSlice {
   deleteImageTrack: (trackId: string) => void;
   updateImageTrack: (trackId: string, updates: Partial<ImageTrack>) => void;
   setSelectedImageTrackId: (trackId: string | null) => void;
+
+  // Narration track management
+  narrationTracks: NarrationTrack[];
+  selectedNarrationTrackId: string | null;
+  addNarrationTrack: (audioUrl: string, text: string, voice: NarrationVoice, duration: number, title?: string, speed?: number) => void;
+  deleteNarrationTrack: (trackId: string) => void;
+  updateNarrationTrack: (trackId: string, updates: Partial<NarrationTrack>) => void;
+  setSelectedNarrationTrackId: (trackId: string | null) => void;
 
   // Text overlay management
   textOverlays: TextOverlay[];

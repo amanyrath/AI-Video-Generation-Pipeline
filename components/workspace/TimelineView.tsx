@@ -6,9 +6,10 @@ import TimelineClip from './TimelineClip';
 import TimelineToolbar from './TimelineToolbar';
 import AudioTrackItem from './AudioTrackItem';
 import ImageTrackItem from './ImageTrackItem';
-import { Clock, Play, Download, Loader2, AlertCircle, RefreshCw, Film, ZoomIn, ZoomOut, X, Music, Image as ImageIcon, Plus, Wand2 } from 'lucide-react';
+import NarrationTrackItem from './NarrationTrackItem';
+import { Clock, Play, Download, Loader2, AlertCircle, RefreshCw, Film, ZoomIn, ZoomOut, X, Music, Image as ImageIcon, Plus, Wand2, Mic } from 'lucide-react';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { stitchVideos, applyClipEdits, generatePreview, generateMusicTrack, pollMusicStatus } from '@/lib/api-client';
+import { stitchVideos, applyClipEdits, generatePreview, generateMusicTrack, pollMusicStatus, generateNarration, NarrationVoice } from '@/lib/api-client';
 
 export default function TimelineView() {
   const {
@@ -39,6 +40,13 @@ export default function TimelineView() {
     deleteImageTrack,
     updateImageTrack,
     setSelectedImageTrackId,
+    // Narration tracks
+    narrationTracks,
+    selectedNarrationTrackId,
+    addNarrationTrack,
+    deleteNarrationTrack,
+    updateNarrationTrack,
+    setSelectedNarrationTrackId,
   } = useProjectStore();
 
   const [isStitching, setIsStitching] = useState(false);
@@ -68,6 +76,13 @@ export default function TimelineView() {
   const [musicDuration, setMusicDuration] = useState(30);
   const [isGeneratingMusic, setIsGeneratingMusic] = useState(false);
   const [musicGenerationProgress, setMusicGenerationProgress] = useState<string>('');
+  // Narration generation state
+  const [showNarrationDialog, setShowNarrationDialog] = useState(false);
+  const [narrationText, setNarrationText] = useState('');
+  const [narrationVoice, setNarrationVoice] = useState<NarrationVoice>('alloy');
+  const [narrationSpeed, setNarrationSpeed] = useState(1.0);
+  const [isGeneratingNarration, setIsGeneratingNarration] = useState(false);
+  const narrationRefs = useRef<Map<string, HTMLAudioElement>>(new Map()); // Audio elements for narration tracks
   const videoRef = useRef<HTMLVideoElement>(null);
   const timelineTrackRef = useRef<HTMLDivElement>(null);
   const preservedTimeRef = useRef<number | null>(null); // Track position to preserve after preview regeneration
@@ -134,6 +149,54 @@ export default function TimelineView() {
         audio.src = '';
       });
       audioRefs.current.clear();
+    };
+  }, []);
+
+  // Initialize and manage narration audio elements
+  useEffect(() => {
+    narrationTracks.forEach(track => {
+      if (!narrationRefs.current.has(track.id)) {
+        const audio = new Audio(track.audioUrl);
+        audio.preload = 'auto';
+        audio.volume = track.volume / 100;
+
+        audio.addEventListener('error', (e) => {
+          console.error(`[Narration] Error loading track ${track.title}:`, e);
+          addChatMessage({
+            role: 'agent',
+            content: `⚠️ Failed to load narration: ${track.title}`,
+            type: 'error',
+          });
+        });
+
+        narrationRefs.current.set(track.id, audio);
+      } else {
+        const audio = narrationRefs.current.get(track.id);
+        if (audio) {
+          audio.volume = track.volume / 100;
+        }
+      }
+    });
+
+    // Clean up removed tracks
+    const trackIds = new Set(narrationTracks.map(t => t.id));
+    narrationRefs.current.forEach((audio, id) => {
+      if (!trackIds.has(id)) {
+        audio.pause();
+        audio.src = '';
+        narrationRefs.current.delete(id);
+      }
+    });
+  }, [narrationTracks, addChatMessage]);
+
+  // Clean up narration audio elements on unmount
+  useEffect(() => {
+    return () => {
+      narrationRefs.current.forEach(audio => {
+        audio.pause();
+        audio.src = '';
+      });
+      narrationRefs.current.clear();
     };
   }, []);
 
@@ -849,6 +912,77 @@ export default function TimelineView() {
     }
   };
 
+  // Handle narration generation
+  const handleGenerateNarration = async () => {
+    if (!narrationText.trim() || !project) return;
+
+    setIsGeneratingNarration(true);
+
+    try {
+      addChatMessage({
+        role: 'agent',
+        content: 'Generating narration with OpenAI TTS HD...',
+        type: 'status',
+      });
+
+      const result = await generateNarration({
+        text: narrationText.trim(),
+        voice: narrationVoice,
+        speed: narrationSpeed,
+        projectId: project.id,
+      });
+
+      if (!result.success || !result.data?.audioUrl) {
+        throw new Error(result.error || 'Narration generation failed');
+      }
+
+      // Add the generated narration to the timeline
+      addNarrationTrack(
+        result.data.audioUrl,
+        result.data.text,
+        result.data.voice,
+        result.data.duration,
+        `Narration (${result.data.voice})`,
+        narrationSpeed
+      );
+
+      addChatMessage({
+        role: 'agent',
+        content: `✓ Narration generated successfully and added to timeline!`,
+        type: 'status',
+      });
+
+      // Reset dialog state
+      setShowNarrationDialog(false);
+      setNarrationText('');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate narration';
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Narration error: ${errorMessage}`,
+        type: 'error',
+      });
+    } finally {
+      setIsGeneratingNarration(false);
+    }
+  };
+
+  // Handle delete narration track
+  const handleDeleteNarration = (trackId: string) => {
+    const audio = narrationRefs.current.get(trackId);
+    if (audio) {
+      audio.pause();
+      audio.src = '';
+      narrationRefs.current.delete(trackId);
+    }
+    deleteNarrationTrack(trackId);
+    addChatMessage({
+      role: 'agent',
+      content: 'Narration track removed from timeline.',
+      type: 'status',
+    });
+  };
+
   // Handle click on timeline to seek
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (totalDuration <= 0) return;
@@ -1339,6 +1473,65 @@ export default function TimelineView() {
                       ) : (
                         <div className="flex items-center justify-center h-full text-white/30 text-sm">
                           No audio tracks. Click "Add Audio" to add music or sound effects.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Narration Track Section */}
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-white/80 flex items-center gap-2">
+                  <Mic className="w-4 h-4 text-purple-400" />
+                  Narration
+                </h3>
+                <button
+                  onClick={() => setShowNarrationDialog(true)}
+                  disabled={isGeneratingNarration}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded border border-purple-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isGeneratingNarration ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3 h-3" />
+                      Generate Narration
+                    </>
+                  )}
+                </button>
+              </div>
+              <div className="relative bg-white/5 rounded-lg border border-white/10 overflow-hidden">
+                <div className="overflow-x-auto overflow-y-hidden custom-scrollbar">
+                  <div
+                    className="relative"
+                    style={{
+                      width: `${Math.max(100, zoomLevel * 100)}%`,
+                      minWidth: '100%'
+                    }}
+                  >
+                    <div className="relative h-20 bg-gradient-to-b from-purple-900/10 to-purple-950/5">
+                      {narrationTracks.length > 0 ? (
+                        narrationTracks.map((track) => (
+                          <NarrationTrackItem
+                            key={track.id}
+                            track={track}
+                            totalDuration={totalDuration}
+                            zoomLevel={zoomLevel}
+                            onDelete={handleDeleteNarration}
+                            onUpdate={updateNarrationTrack}
+                            onSelect={() => setSelectedNarrationTrackId(track.id)}
+                            isSelected={selectedNarrationTrackId === track.id}
+                          />
+                        ))
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-white/30 text-sm">
+                          No narration. Click "Generate Narration" to add voice-over.
                         </div>
                       )}
                     </div>
@@ -1911,6 +2104,116 @@ export default function TimelineView() {
                     <>
                       <Wand2 className="w-4 h-4" />
                       Generate Music
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Narration Generation Dialog */}
+      {showNarrationDialog && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-white/20 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Mic className="w-5 h-5 text-purple-400" />
+                Generate Narration
+              </h3>
+              <button
+                onClick={() => setShowNarrationDialog(false)}
+                className="text-white/60 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Narration Text */}
+              <div>
+                <label className="block text-sm text-white/80 mb-2">Narration Text</label>
+                <textarea
+                  value={narrationText}
+                  onChange={(e) => setNarrationText(e.target.value)}
+                  disabled={isGeneratingNarration}
+                  placeholder="Enter the text you want to be narrated... e.g., 'Welcome to our product showcase. Today we'll explore the amazing features...'"
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-500 min-h-[120px] resize-y"
+                />
+                <p className="text-xs text-white/40 mt-1">
+                  {narrationText.length} characters ({Math.ceil(narrationText.split(/\s+/).filter(w => w).length / 150 * 60)}s estimated)
+                </p>
+              </div>
+
+              {/* Voice Selection */}
+              <div>
+                <label className="block text-sm text-white/80 mb-2">Voice</label>
+                <select
+                  value={narrationVoice}
+                  onChange={(e) => setNarrationVoice(e.target.value as NarrationVoice)}
+                  disabled={isGeneratingNarration}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="alloy">Alloy - Neutral, versatile</option>
+                  <option value="echo">Echo - Warm, conversational</option>
+                  <option value="fable">Fable - Expressive, storytelling</option>
+                  <option value="onyx">Onyx - Deep, authoritative</option>
+                  <option value="nova">Nova - Energetic, youthful</option>
+                  <option value="shimmer">Shimmer - Soft, gentle</option>
+                </select>
+              </div>
+
+              {/* Speed Control */}
+              <div>
+                <label className="block text-sm text-white/80 mb-2">
+                  Speed: {narrationSpeed.toFixed(1)}x
+                </label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2.0"
+                  step="0.1"
+                  value={narrationSpeed}
+                  onChange={(e) => setNarrationSpeed(parseFloat(e.target.value))}
+                  disabled={isGeneratingNarration}
+                  className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                />
+                <div className="flex justify-between text-xs text-white/40 mt-1">
+                  <span>Slower (0.5x)</span>
+                  <span>Normal (1.0x)</span>
+                  <span>Faster (2.0x)</span>
+                </div>
+              </div>
+
+              {/* Info about TTS */}
+              <div className="text-xs text-white/50 bg-white/5 p-3 rounded">
+                <p className="font-semibold mb-1">Powered by OpenAI TTS HD</p>
+                <p>High-quality text-to-speech using OpenAI's TTS-1-HD model. Perfect for professional voice-overs and narration.</p>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowNarrationDialog(false)}
+                  disabled={isGeneratingNarration}
+                  className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleGenerateNarration}
+                  disabled={isGeneratingNarration || !narrationText.trim()}
+                  className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isGeneratingNarration ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-4 h-4" />
+                      Generate Narration
                     </>
                   )}
                 </button>

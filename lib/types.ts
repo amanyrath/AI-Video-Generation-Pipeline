@@ -285,6 +285,40 @@ export interface AudioTrack {
 }
 
 // ============================================================================
+// Narration Track Types
+// ============================================================================
+
+/**
+ * Available OpenAI TTS HD voices
+ */
+export type NarrationVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
+
+/**
+ * Represents a narration track on the timeline
+ */
+export interface NarrationTrack {
+  id: string;                // UUID v4
+  title: string;             // Track name/title
+  text: string;              // Original narration text
+  audioUrl: string;          // URL to audio file
+  audioLocalPath?: string;   // Local path to audio file
+  s3Key?: string;            // S3 storage key
+  startTime: number;         // Start time in timeline (seconds)
+  duration: number;          // Duration of narration (seconds)
+  volume: number;            // Volume level (0-100)
+  voice: NarrationVoice;     // Voice used for TTS
+  speed: number;             // Speed multiplier (0.25-4.0)
+  fadeIn?: number;           // Fade in duration (seconds)
+  fadeOut?: number;          // Fade out duration (seconds)
+  trimStart?: number;        // Trim start point in source audio (seconds)
+  trimEnd?: number;          // Trim end point in source audio (seconds)
+
+  // Computed properties
+  endTime: number;           // End time in timeline (startTime + duration)
+  sourceDuration: number;    // Original source audio duration before trimming
+}
+
+// ============================================================================
 // Image Track Types
 // ============================================================================
 
