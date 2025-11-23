@@ -14,7 +14,7 @@ import type { AngleType } from '@/lib/types';
 interface AssetViewerProps {
   selectedCar: CarVariant | CustomAsset | null;
   onAddRecoloredImage?: (baseCarId: string, imageUrl: string, colorHex: string) => void;
-  onAddRecoloredImages?: (baseCarId: string, images: Array<{ url: string, colorHex: string }>) => void;
+  onAddRecoloredImages?: (baseCarId: string, images: Array<{ url: string, colorHex: string }>, replaceImageIds?: string[]) => void;
   onAddCustomAsset?: (baseCarId: string, name: string) => void;
   onUploadImages?: () => void;
   onRemoveImage?: (assetId: string, imageId: string) => void;
@@ -367,6 +367,7 @@ export default function AssetViewer({
       }
 
       console.log(`[AssetViewer] Cleaning edges for ${imagesToClean.length} image(s)...`);
+      console.log('[AssetViewer] Image IDs to clean:', imagesToClean.map(img => img.id));
 
       // Get the image URLs
       const imageUrls = imagesToClean.map(img => img.url);
@@ -392,13 +393,20 @@ export default function AssetViewer({
 
       console.log(`[AssetViewer] Successfully cleaned ${data.processedImages.length} image(s)`);
 
-      // Add the cleaned images to the asset
+      // Replace the cleaned images in the asset
       if (data.processedImages && data.processedImages.length > 0 && onAddRecoloredImages) {
         const cleanedResults = data.processedImages.map((img: any) => ({
           url: img.url,
           colorHex: selectedColor || '#FFFFFF',
         }));
-        onAddRecoloredImages(selectedCar.id, cleanedResults);
+
+        // Pass the IDs of the original images that should be replaced
+        const replaceImageIds = imagesToClean.map(img => img.id);
+        console.log('[AssetViewer] Calling onAddRecoloredImages with:');
+        console.log('  - baseCarId:', selectedCar.id);
+        console.log('  - cleanedResults:', cleanedResults.length, 'images');
+        console.log('  - replaceImageIds:', replaceImageIds);
+        onAddRecoloredImages(selectedCar.id, cleanedResults, replaceImageIds);
       }
 
     } catch (error) {

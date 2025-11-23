@@ -324,42 +324,53 @@ export default function BrandIdentityScreen() {
     router.push('/workspace?autoGenerate=true');
   };
 
-  const handleAddRecoloredImages = (baseCarId: string, images: Array<{ url: string, colorHex: string }>) => {
+  const handleAddRecoloredImages = (baseCarId: string, images: Array<{ url: string, colorHex: string }>, replaceImageIds?: string[]) => {
     if (images.length === 0) return;
-    
+
     const colorHex = images[0].colorHex; // Assume all images in batch have same color
-    console.log(`[BrandIdentityScreen] Adding ${images.length} recolored images to base car ${baseCarId}`);
+    const isEdgeCleanup = replaceImageIds && replaceImageIds.length > 0;
+    console.log(`[BrandIdentityScreen] ${isEdgeCleanup ? 'Cleaning edges for' : 'Adding'} ${images.length} images to base car ${baseCarId}`);
+    if (replaceImageIds) {
+      console.log('[BrandIdentityScreen] Will replace image IDs:', replaceImageIds);
+    }
 
     setCustomAssets(prevAssets => {
       const existingCustomAsset = prevAssets.find(asset => asset.id === baseCarId);
-      
+
       // If recoloring within a custom asset, replace the selected images
       if (existingCustomAsset) {
         console.log('[BrandIdentityScreen] Replacing images in existing custom asset:', existingCustomAsset.name);
-        
-        // Get the IDs of images that were selected for recoloring
-        const recoloredImageIds = Array.from(selectedAssetIds);
-        
+
+        // Get the IDs of images that should be replaced
+        // Use replaceImageIds if provided, otherwise fall back to selectedAssetIds
+        const recoloredImageIds = replaceImageIds || Array.from(selectedAssetIds);
+        console.log('[BrandIdentityScreen] Image IDs to replace:', recoloredImageIds);
+
         // Create new images from recolored results
         const newImages = images.map(img => ({
           id: `recolored-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           url: img.url,
           type: 'custom' as const,
           filename: `recolored-${img.colorHex.replace('#', '')}-${Math.random().toString(36).substr(2, 5)}.jpg`,
-          alt: `${existingCustomAsset.name} recolored to ${img.colorHex}`,
+          alt: `${existingCustomAsset.name} ${isEdgeCleanup ? 'with cleaned edges' : `recolored to ${img.colorHex}`}`,
         }));
-        
+
         // Replace old images with new ones
         const updatedImages = existingCustomAsset.referenceImages.filter(
           img => !recoloredImageIds.includes(img.id)
         ).concat(newImages);
-        
+
+        console.log('[BrandIdentityScreen] Original image count:', existingCustomAsset.referenceImages.length);
+        console.log('[BrandIdentityScreen] New image count:', updatedImages.length);
+
+        const adjustmentText = isEdgeCleanup ? 'Cleaned edges' : `Recolored to ${colorHex}`;
+
         return prevAssets.map(asset =>
           asset.id === baseCarId
             ? {
                 ...asset,
                 referenceImages: updatedImages,
-                adjustments: [...asset.adjustments, `Recolored to ${colorHex}`],
+                adjustments: [...asset.adjustments, adjustmentText],
               }
             : asset
         );

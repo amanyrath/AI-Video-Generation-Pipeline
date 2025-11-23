@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession, signIn } from 'next-auth/react';
 import DevPanel from './workspace/DevPanel';
 import { StartingScreenProps } from '@/lib/types/components';
 import { Settings, ArrowRight, Image, X, Loader2, Play, Trash2, ChevronDown } from 'lucide-react';
@@ -14,6 +15,7 @@ export default function StartingScreen({
   onCreateProject,
   isLoading: externalLoading,
 }: StartingScreenProps) {
+  const { data: session, status } = useSession();
   const [isDevPanelOpen, setIsDevPanelOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [images, setImages] = useState<File[]>([]);
@@ -28,6 +30,7 @@ export default function StartingScreen({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | 'all'>('all');
   const [targetDuration, setTargetDuration] = useState(30); // Default to 30s mode
+  const [isCreatingGuest, setIsCreatingGuest] = useState(false);
 
   // Use ref to prevent race conditions from rapid clicks
   const isTransitioningRef = useRef(false);
@@ -35,6 +38,86 @@ export default function StartingScreen({
   const router = useRouter();
   const { projects, isLoading: projectsLoading, error: projectsError, refetch: refetchProjects } = useProjects('mine');
   const store = useProjectStore();
+
+  // Helper function to create guest user if not authenticated
+  const createGuestUserIfNeeded = async (): Promise<boolean> => {
+    if (status === 'authenticated') {
+      return true; // Already authenticated
+    }
+
+    if (status === 'unauthenticated') {
+      try {
+        console.log('[StartingScreen] Creating guest user...');
+        setIsCreatingGuest(true);
+        setGenerationStatus('Creating guest session...');
+
+        // Create guest user
+        const response = await fetch('/api/auth/guest', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to create guest user');
+        }
+
+        const data = await response.json();
+        console.log('[StartingScreen] Guest user created:', data.user.email);
+
+        // Sign in with the guest credentials
+        const result = await signIn('credentials', {
+          email: data.credentials.email,
+          password: data.credentials.password,
+          redirect: false,
+        });
+
+        if (result?.error) {
+          console.error('[StartingScreen] Guest sign-in failed:', result.error);
+          setIsCreatingGuest(false);
+          return false;
+        }
+
+        console.log('[StartingScreen] Guest user signed in successfully');
+
+        // Wait for session to propagate (NextAuth needs time to update the session)
+        // Poll for up to 5 seconds to ensure session is ready
+        const maxWaitTime = 5000;
+        const pollInterval = 100;
+        let waited = 0;
+
+        while (waited < maxWaitTime) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          waited += pollInterval;
+
+          // Check if session has updated (status will change from 'unauthenticated' to 'authenticated')
+          // Note: We can't check the status directly here since it's from the hook,
+          // but we can verify by making a quick authenticated API call
+          try {
+            const checkResponse = await fetch('/api/projects?scope=mine');
+            if (checkResponse.ok || checkResponse.status !== 401) {
+              console.log('[StartingScreen] Session verified after', waited, 'ms');
+              setIsCreatingGuest(false);
+              return true;
+            }
+          } catch (e) {
+            // Continue polling
+          }
+        }
+
+        console.warn('[StartingScreen] Session may not be fully propagated after', maxWaitTime, 'ms');
+        setIsCreatingGuest(false);
+        return true; // Proceed anyway, session should be working
+      } catch (error) {
+        console.error('[StartingScreen] Failed to create guest user:', error);
+        setIsCreatingGuest(false);
+        return false;
+      }
+    }
+
+    return false; // Still loading
+  };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []).filter(file => 
@@ -154,6 +237,18 @@ export default function StartingScreen({
 
     isTransitioningRef.current = true;
     setIsGeneratingStoryboard(true);
+    setGenerationStatus('Preparing...');
+
+    // Create guest user if not authenticated
+    const isAuthenticated = await createGuestUserIfNeeded();
+    if (!isAuthenticated) {
+      console.error('[StartingScreen] Failed to authenticate user');
+      setIsGeneratingStoryboard(false);
+      isTransitioningRef.current = false;
+      alert('Failed to create session. Please refresh and try again.');
+      return;
+    }
+
     setGenerationStatus('Extracting details...');
 
     // Extract car model from prompt using AI
@@ -190,6 +285,8 @@ export default function StartingScreen({
     router.push(`/style?prompt=${encodeURIComponent(prompt.trim())}&targetDuration=${targetDuration}${carParams}`);
   };
 
+  // Don't block on loading - allow unauthenticated users to see the page immediately
+  // Guest session will be created when they submit their prompt
   return (
     <div
       className="min-h-screen flex flex-col items-center p-6 cinematic-gradient relative overflow-hidden"

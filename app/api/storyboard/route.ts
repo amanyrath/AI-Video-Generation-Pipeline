@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateStoryboard, createErrorResponse, setRuntimeTextModel } from '@/lib/ai/storyboard-generator';
 import { StoryboardRequest, StoryboardResponse } from '@/lib/types';
+import { getSession } from '@/lib/auth/auth-utils';
 
 // ============================================================================
 // Request Validation
@@ -72,6 +73,15 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
   try {
+    // Check authentication
+    const session = await getSession();
+
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    console.log(`[Storyboard API] Request from user: ${session.user.id}`);
+
     // Check for runtime model override in headers
     const runtimeTextModel = request.headers.get('X-Model-Text');
     if (runtimeTextModel) {
@@ -176,10 +186,17 @@ export async function POST(request: NextRequest) {
 
 /**
  * GET /api/storyboard
- * 
+ *
  * Health check endpoint to verify the API is working.
  */
 export async function GET() {
+  // Check authentication
+  const session = await getSession();
+
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   return NextResponse.json(
     {
       status: 'ok',

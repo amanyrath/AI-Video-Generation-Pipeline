@@ -18,6 +18,7 @@ export default withAuth(
           '/auth/signup',
           '/auth/error',
           '/api/auth',
+          '/api/auth/guest',
           '/api/health',
           '/api/assets/cars',
           '/share',
