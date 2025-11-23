@@ -38,6 +38,7 @@ export default function MediaDrawer() {
     project,
     scenes,
     mediaDrawer,
+    dragDrop,
     setMediaFilter: setFilter,
     setMediaSearchQuery: setSearchQuery,
     toggleMediaItem: toggleItem,
@@ -50,9 +51,12 @@ export default function MediaDrawer() {
     currentSceneIndex,
     addAdditionalMedia,
     removeAdditionalMedia,
+    addSavedImage,
+    removeSavedImage,
   } = useProjectStore();
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     characterRefs: true,
+    saved: true, // Saved images section
     images: true,
     videos: true,
     frames: true,
@@ -70,6 +74,7 @@ export default function MediaDrawer() {
   const [publicBackgrounds, setPublicBackgrounds] = useState<PublicBackground[]>([]);
   const additionalMediaInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingAdditionalMedia, setIsUploadingAdditionalMedia] = useState(false);
+  const [isSavedImagesDragOver, setIsSavedImagesDragOver] = useState(false);
 
   // Load public backgrounds on mount
   useEffect(() => {
@@ -394,6 +399,45 @@ export default function MediaDrawer() {
     return refs;
   }, [project?.characterReferences]);
 
+  // Saved images from project state
+  const savedImages = useMemo(() => {
+    const allSaved: MediaItem[] = [];
+
+    if (project?.savedImages) {
+      project.savedImages.forEach((savedImage) => {
+        // Always serve through API using localPath for consistent access
+        let imageUrl: string;
+        if (savedImage.url.startsWith('http://') || savedImage.url.startsWith('https://')) {
+          // S3 or external URL - use directly
+          imageUrl = savedImage.url;
+        } else if (savedImage.localPath) {
+          imageUrl = `/api/serve-image?path=${encodeURIComponent(savedImage.localPath)}`;
+        } else if (savedImage.url.startsWith('/api')) {
+          imageUrl = savedImage.url;
+        } else {
+          imageUrl = `/api/serve-image?path=${encodeURIComponent(savedImage.url)}`;
+        }
+
+        allSaved.push({
+          id: savedImage.id,
+          type: 'image' as const,
+          url: imageUrl,
+          sceneIndex: savedImage.sourceSceneIndex,
+          prompt: savedImage.prompt,
+          metadata: {
+            fullUrl: imageUrl,
+            name: savedImage.name,
+            sourceType: savedImage.sourceType,
+            savedAt: savedImage.savedAt,
+          },
+          timestamp: savedImage.savedAt,
+        });
+      });
+    }
+
+    return allSaved;
+  }, [project?.savedImages]);
+
   // Background images from project state + public backgrounds
   const backgroundImages = useMemo(() => {
     const allBackgrounds: MediaItem[] = [];
@@ -669,6 +713,117 @@ export default function MediaDrawer() {
   const handleRemoveAdditionalMedia = (mediaId: string) => {
     if (confirm('Are you sure you want to remove this media?')) {
       removeAdditionalMedia(mediaId);
+    }
+  };
+
+  // Handle saving an image to the saved images collection
+  const handleSaveImage = (itemId: string, itemType: 'image' | 'video' | 'frame') => {
+    if (itemType === 'video') {
+      alert('Only images can be saved to the media drawer.');
+      return;
+    }
+
+    // Find the image in the various sources
+    let foundImage: any = null;
+    let sourceType: 'generated' | 'seed-frame' | 'uploaded' | 'background' = 'generated';
+    let sourceSceneIndex: number | undefined;
+
+    // Check generated images
+    for (let sceneIdx = 0; sceneIdx < scenes.length; sceneIdx++) {
+      const scene = scenes[sceneIdx];
+      const img = scene.generatedImages?.find((img: any) => img.id === itemId);
+      if (img) {
+        foundImage = img;
+        sourceType = 'generated';
+        sourceSceneIndex = sceneIdx;
+        break;
+      }
+    }
+
+    // Check seed frames
+    if (!foundImage) {
+      for (let sceneIdx = 0; sceneIdx < scenes.length; sceneIdx++) {
+        const scene = scenes[sceneIdx];
+        const frame = scene.seedFrames?.find((f: any) => f.id === itemId);
+        if (frame) {
+          foundImage = frame;
+          sourceType = 'seed-frame';
+          sourceSceneIndex = sceneIdx;
+          break;
+        }
+      }
+    }
+
+    // Check uploaded images (brand assets)
+    if (!foundImage && project?.uploadedImages) {
+      for (const uploadedImage of project.uploadedImages) {
+        if (uploadedImage.id === itemId) {
+          foundImage = uploadedImage;
+          sourceType = 'uploaded';
+          break;
+        }
+        // Check processed versions
+        if (uploadedImage.processedVersions) {
+          const processed = uploadedImage.processedVersions.find((p: any) => p.id === itemId);
+          if (processed) {
+            foundImage = processed;
+            sourceType = 'uploaded';
+            break;
+          }
+        }
+      }
+    }
+
+    // Check background images
+    if (!foundImage && project?.backgroundImages) {
+      for (const backgroundImage of project.backgroundImages) {
+        if (backgroundImage.id === itemId) {
+          foundImage = backgroundImage;
+          sourceType = 'background';
+          break;
+        }
+        // Check processed versions
+        if (backgroundImage.processedVersions) {
+          const processed = backgroundImage.processedVersions.find((p: any) => p.id === itemId);
+          if (processed) {
+            foundImage = processed;
+            sourceType = 'background';
+            break;
+          }
+        }
+      }
+    }
+
+    if (!foundImage) {
+      alert('Could not find the image to save.');
+      return;
+    }
+
+    // Check if already saved
+    if (project?.savedImages?.some(saved => saved.id === itemId)) {
+      alert('This image is already saved to the media drawer.');
+      return;
+    }
+
+    // Create saved image object
+    const savedImage: import('@/lib/types').SavedImage = {
+      id: foundImage.id,
+      url: foundImage.url || foundImage.localPath,
+      localPath: foundImage.localPath || foundImage.url,
+      s3Key: foundImage.s3Key,
+      prompt: foundImage.prompt,
+      sourceSceneIndex,
+      sourceType,
+      savedAt: new Date().toISOString(),
+    };
+
+    addSavedImage(savedImage);
+    alert('Image saved to media drawer!');
+  };
+
+  const handleRemoveSavedImage = (imageId: string) => {
+    if (confirm('Remove this image from saved images?')) {
+      removeSavedImage(imageId);
     }
   };
 
@@ -993,6 +1148,107 @@ export default function MediaDrawer() {
           'No character references',
           true // Skip scene filtering
         )}
+
+        {/* Saved Images - Custom render with drop zone */}
+        <div className="mb-4">
+          <button
+            onClick={() => toggleSection('saved')}
+            className="w-full flex items-center justify-between px-2 py-1.5 text-sm font-semibold text-white hover:bg-white/10 rounded-lg transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              {expandedSections['saved'] ? (
+                <ChevronDown className="w-4 h-4 text-white/60" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-white/60" />
+              )}
+              <span className="text-white/60"><ImageIcon className="w-4 h-4" /></span>
+              <span>Saved Images</span>
+              {savedImages.length > 0 && (
+                <span className="ml-2 px-2 py-0.5 text-xs bg-white/10 text-white/80 rounded-full border border-white/20">
+                  {savedImages.length}
+                </span>
+              )}
+            </div>
+          </button>
+
+          {expandedSections['saved'] && (
+            <div
+              className={`mt-2 rounded-lg border-2 border-dashed transition-colors ${
+                isSavedImagesDragOver
+                  ? 'border-green-400 bg-green-500/10'
+                  : 'border-white/20'
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsSavedImagesDragOver(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsSavedImagesDragOver(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsSavedImagesDragOver(false);
+
+                // Get dragged item data from JSON
+                try {
+                  const data = e.dataTransfer.getData('application/json');
+                  if (data) {
+                    const { itemId, itemType } = JSON.parse(data);
+                    if (itemId && itemType) {
+                      handleSaveImage(itemId, itemType);
+                    }
+                  } else {
+                    // Fallback: try to get from global drag state
+                    if (dragDrop.draggedItemId && dragDrop.draggedItemType) {
+                      handleSaveImage(dragDrop.draggedItemId, dragDrop.draggedItemType);
+                    }
+                  }
+                } catch (error) {
+                  console.error('Error parsing drag data:', error);
+                }
+              }}
+            >
+              {savedImages.length === 0 ? (
+                <div className="px-2 py-8 text-center">
+                  <ImageIcon className="w-12 h-12 text-white/20 mx-auto mb-2" />
+                  <p className="text-xs text-white/60">
+                    No saved images yet.
+                  </p>
+                  <p className="text-xs text-white/40 mt-1">
+                    Drag images here to save them for use across all scenes.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 p-2">
+                  {savedImages.map((item) => (
+                    <div key={item.id} className="relative">
+                      {renderMediaThumbnail(item, false)}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveSavedImage(item.id);
+                        }}
+                        className="absolute top-2 left-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-full transition-colors border border-red-400/50 opacity-0 group-hover:opacity-100"
+                        title="Remove from saved images"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                      {item.metadata?.name && (
+                        <div className="absolute bottom-2 left-2 right-2 bg-black/75 text-white text-xs px-2 py-1 rounded truncate">
+                          {item.metadata.name}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Generated Images */}
         {renderSection(

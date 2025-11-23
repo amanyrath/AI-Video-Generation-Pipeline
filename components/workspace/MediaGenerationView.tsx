@@ -156,7 +156,7 @@ export default function MediaGenerationView() {
       setDroppedImageUrls([]);
       setCustomImagePreviews(imageInputs.map(url => ({ url, source: 'media' as const })));
     }
-  }, [currentSceneIndex, currentScene?.imagePrompt, currentScene?.videoPrompt, currentScene?.negativePrompt, currentScene?.customDuration, currentScene?.customImageInput]);
+  }, [currentSceneIndex]);
 
   const handleGenerateImage = async () => {
     if (!project?.id || isGeneratingImage) return;
@@ -299,13 +299,13 @@ export default function MediaGenerationView() {
       const imagePromises = Array(3).fill(null).map(async (_, index) => {
         try {
           const response = await generateImage({
-            prompt: currentScene.imagePrompt,
+            prompt: editedPrompt || currentScene.imagePrompt,
             projectId: project.id,
             sceneIndex: currentSceneIndex,
             seedImage: seedImageUrl,
             referenceImageUrls,
             seedFrame: seedFrameUrl,
-            negativePrompt: currentScene.negativePrompt,
+            negativePrompt: editedNegativePrompt || currentScene.negativePrompt,
           });
 
           if (!response.predictionId) {
@@ -327,7 +327,7 @@ export default function MediaGenerationView() {
               interval: 2000,
               projectId: project.id,
               sceneIndex: currentSceneIndex,
-              prompt: currentScene.imagePrompt,
+              prompt: editedPrompt || currentScene.imagePrompt,
               onProgress: (status) => {
                 setGeneratingImages(prev => {
                   const updated = [...prev];
@@ -596,7 +596,7 @@ export default function MediaGenerationView() {
         id: `generating-${index}`,
         url: '',
         localPath: '',
-        prompt: currentScene.imagePrompt,
+        prompt: editedPrompt || currentScene.imagePrompt,
         replicateId: genImg.predictionId,
         createdAt: new Date().toISOString(),
       } as GeneratedImage);
@@ -663,7 +663,7 @@ export default function MediaGenerationView() {
             <textarea
               value={editedPrompt}
               onChange={(e) => setEditedPrompt(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 focus:border-white/40 text-white placeholder-white/40 resize-none backdrop-blur-sm"
+              className="w-full px-3 py-2 text-sm bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 focus:border-white/40 text-white placeholder-white/40 resize-none backdrop-blur-sm [color:white]"
               rows={4}
               placeholder="Enter image generation prompt..."
               required

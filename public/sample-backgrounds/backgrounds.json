@@ -5,5 +5,26 @@
     "name": "Studio Waves",
     "description": "Dark studio background with flowing wave patterns",
     "tags": ["studio", "dark", "artistic", "waves"]
+  },
+  {
+    "id": "offroad",
+    "filename": "offroad-background.jpg",
+    "name": "Off-Road Terrain",
+    "description": "Rocky off-road terrain with natural vegetation - perfect for adventure and outdoor scenes",
+    "tags": ["outdoor", "nature", "terrain", "adventure", "dirt", "rocks"]
+  },
+  {
+    "id": "red-laser",
+    "filename": "red-laser-background.png",
+    "name": "Red Laser Trails",
+    "description": "Dark studio background with dramatic red laser light trails and geometric patterns",
+    "tags": ["studio", "dark", "dramatic", "laser", "red", "futuristic", "geometric"]
+  },
+  {
+    "id": "black-outline",
+    "filename": "black-outline-background.png",
+    "name": "Minimal Black",
+    "description": "Pure black background with subtle white outline - perfect for minimalist and dramatic compositions",
+    "tags": ["minimal", "dark", "black", "outline", "simple", "dramatic"]
   }
 ]

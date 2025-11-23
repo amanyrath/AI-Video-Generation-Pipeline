@@ -87,7 +87,6 @@ export default function EditorView() {
   const [editedVideoPrompt, setEditedVideoPrompt] = useState('');
   const [editedNegativePrompt, setEditedNegativePrompt] = useState('');
   const [editedDuration, setEditedDuration] = useState<number | ''>('');
-  const [editedUseSeedFrame, setEditedUseSeedFrame] = useState<boolean>(false);
   const [customImageFiles, setCustomImageFiles] = useState<File[]>([]);
   const [customImagePreviews, setCustomImagePreviews] = useState<Array<{ url: string; source: 'file' | 'media' | 'url' } | null>>([]);
   const [droppedImageUrls, setDroppedImageUrls] = useState<string[]>([]); // Store original URLs from dropped media
@@ -173,10 +172,8 @@ export default function EditorView() {
     if (currentScene) {
       setEditedPrompt(currentScene.imagePrompt);
       setEditedVideoPrompt(currentScene.videoPrompt || currentScene.imagePrompt); // Fallback to imagePrompt for backward compatibility
-      setEditedNegativePrompt(currentScene.negativePrompt || '');
+      setEditedNegativePrompt(currentScene.negativePrompt || '--no watermark --no warped face --no floating limbs --no text artifacts --no distorted hands --no blurry edges');
       setEditedDuration(currentScene.customDuration || '');
-      // Default to false (opt-in for longer scenes), or use saved value
-      setEditedUseSeedFrame(currentScene.useSeedFrame !== undefined ? currentScene.useSeedFrame : false);
       // Initialize custom images - support both single string (legacy) and array
       const imageInputs = currentScene.customImageInput
         ? (Array.isArray(currentScene.customImageInput) ? currentScene.customImageInput : [currentScene.customImageInput])
@@ -185,36 +182,31 @@ export default function EditorView() {
       setDroppedImageUrls([]);
       setCustomImagePreviews(imageInputs.map(url => ({ url, source: 'media' as const })));
     }
-  }, [currentSceneIndex, currentScene?.imagePrompt, currentScene?.videoPrompt, currentScene?.negativePrompt, currentScene?.customDuration, currentScene?.customImageInput, currentScene?.useSeedFrame]);
+  }, [currentSceneIndex]);
 
-  // Auto-populate seed image (slot 0) when useSeedFrame is checked and we have a previous scene
+  // Auto-populate seed image (slot 0) with selected image from image tab
   useEffect(() => {
-    if (currentSceneIndex > 0 && currentScene?.useSeedFrame) {
-      const previousScene = scenes[currentSceneIndex - 1];
-      const selectedSeedFrameIndex = previousScene?.selectedSeedFrameIndex ?? 0;
-      const seedFrame = previousScene?.seedFrames?.[selectedSeedFrameIndex];
+    // If there's a selected image from the image tab, auto-populate it as seed image
+    if (selectedImage && selectedImage.localPath) {
+      const seedImageUrl = selectedImage.localPath.startsWith('http://') || selectedImage.localPath.startsWith('https://') || selectedImage.localPath.startsWith('/api')
+        ? selectedImage.localPath
+        : `/api/serve-image?path=${encodeURIComponent(selectedImage.localPath)}`;
 
-      if (seedFrame) {
-        const seedFrameUrl = seedFrame.url.startsWith('http://') || seedFrame.url.startsWith('https://') || seedFrame.url.startsWith('/api')
-          ? seedFrame.url
-          : `/api/serve-image?path=${encodeURIComponent(seedFrame.localPath || seedFrame.url)}`;
-
-        // Only auto-populate if slot 0 is empty or was auto-populated before
-        setCustomImagePreviews(prev => {
-          const newPreviews = [...prev];
-          // Auto-populate if empty or if it's a URL (likely auto-populated before)
-          if (!newPreviews[0] || newPreviews[0].source === 'url') {
-            newPreviews[0] = {
-              url: seedFrameUrl,
-              source: 'url' as const
-            };
-            console.log('[EditorView] Auto-populated seed image from previous scene on scene change');
-          }
-          return newPreviews;
-        });
-      }
-    } else if (currentSceneIndex === 0 || !currentScene?.useSeedFrame) {
-      // Clear auto-populated seed image for scene 0 or when useSeedFrame is false
+      // Only auto-populate if slot 0 is empty or was auto-populated before
+      setCustomImagePreviews(prev => {
+        const newPreviews = [...prev];
+        // Auto-populate if empty or if it's a URL (likely auto-populated before)
+        if (!newPreviews[0] || newPreviews[0].source === 'url') {
+          newPreviews[0] = {
+            url: seedImageUrl,
+            source: 'url' as const
+          };
+          console.log('[EditorView] Auto-populated seed image from selected image in image tab');
+        }
+        return newPreviews;
+      });
+    } else {
+      // Clear auto-populated seed image if no selected image
       setCustomImagePreviews(prev => {
         const newPreviews = [...prev];
         if (newPreviews[0]?.source === 'url') {
@@ -224,7 +216,7 @@ export default function EditorView() {
         return newPreviews;
       });
     }
-  }, [currentSceneIndex, currentScene?.useSeedFrame, scenes]);
+  }, [selectedImage]);
 
   const handleGenerateImage = async () => {
     if (!project?.id) return;
@@ -388,13 +380,13 @@ export default function EditorView() {
           // For Scene 0: Use reference image as seed image if available
           // For Scenes 1-4: Use seed frame from previous scene as seed image
           const response = await generateImage({
-            prompt: currentScene.imagePrompt,
+            prompt: editedPrompt || currentScene.imagePrompt,
             projectId: project.id,
             sceneIndex: currentSceneIndex,
             seedImage: seedImageUrl, // Custom image input, seed frame from previous scene, or reference image for Scene 0
             referenceImageUrls, // Reference images via IP-Adapter (for object consistency)
             seedFrame: seedFrameUrl, // Seed frame URL (same as seedImage for scenes 1-4, unless custom image input is used)
-            negativePrompt: currentScene.negativePrompt, // Optional negative prompt
+            negativePrompt: editedNegativePrompt || currentScene.negativePrompt, // Optional negative prompt
           });
 
           // Check if predictionId exists
@@ -419,7 +411,7 @@ export default function EditorView() {
               interval: 2000,
               projectId: project.id,
               sceneIndex: currentSceneIndex,
-              prompt: currentScene.imagePrompt,
+              prompt: editedPrompt || currentScene.imagePrompt,
               onProgress: (status) => {
                 setGeneratingImages(prev => {
                   const updated = [...prev];
@@ -515,49 +507,13 @@ export default function EditorView() {
     try {
       setSceneStatus(currentSceneIndex, 'generating_video');
 
-      // Get seed frame from previous scene (if available and not Scene 0)
-      // Seed frame will be used as the base image for continuity
-      let seedFrameUrl: string | undefined;
-      const useSeedFrame = currentScene.useSeedFrame === true; // Only use if explicitly enabled
-      if (currentSceneIndex > 0 && useSeedFrame) {
-        const previousScene = scenes[currentSceneIndex - 1];
-        if (previousScene?.seedFrames && previousScene.seedFrames.length > 0) {
-          const selectedIndex = previousScene.selectedSeedFrameIndex ?? 0;
-          const selectedFrame = previousScene.seedFrames[selectedIndex];
-
-          // Check if frame URL is already a public URL (S3 or served via API)
-          if (selectedFrame.url.startsWith('http://') || selectedFrame.url.startsWith('https://')) {
-            seedFrameUrl = selectedFrame.url; // Already an S3/public URL
-          } else {
-            // Upload to S3 (or get public URL via API fallback)
-            const localPath = selectedFrame.localPath || selectedFrame.url;
-            try {
-              const { s3Url: frameS3Url } = await uploadImageToS3(localPath, project.id);
-              seedFrameUrl = frameS3Url;
-            } catch (error) {
-              console.error('Error uploading seed frame:', error);
-              throw new Error('Failed to upload seed frame. Please try again.');
-            }
-          }
-        }
+      // Seed frame logic removed - users now manually save last frame when needed
+      // Always use the selected image for video generation
+      if (!selectedImage) {
+        throw new Error('Please generate or select an image first');
       }
-
-      // Use seed frame as base image if available (for continuity), otherwise use generated image
-      let imageToUse: string | undefined;
-      let baseImageSource: string;
-
-      if (seedFrameUrl) {
-        imageToUse = seedFrameUrl;
-        baseImageSource = 'seed frame';
-      } else {
-        if (!selectedImage) {
-          throw new Error('Please generate or select an image first');
-        }
-        imageToUse = selectedImage.localPath || selectedImage.url;
-        baseImageSource = 'generated image';
-      }
-
-      console.log(`[EditorView] Scene ${currentSceneIndex}: Using ${baseImageSource} for video generation`);
+      const imageToUse = selectedImage.localPath || selectedImage.url;
+      console.log(`[EditorView] Scene ${currentSceneIndex}: Using selected image for video generation`);
 
       // Upload image to S3 if it's a local path, otherwise use the URL directly
       let s3Url: string;
@@ -570,6 +526,47 @@ export default function EditorView() {
         const uploadResult = await uploadImageToS3(imageToUse, project.id);
         s3Url = uploadResult.s3Url;
         console.log('[EditorView] Uploaded image to S3:', s3Url.substring(0, 80) + '...');
+      }
+
+      // Collect reference images from slots 1-3
+      const referenceImageUrls: string[] = [];
+      for (let slotIndex = 1; slotIndex <= 3; slotIndex++) {
+        const preview = customImagePreviews[slotIndex];
+        if (preview) {
+          try {
+            let refUrl: string | undefined;
+            if (preview.source === 'file') {
+              // Find the file for this slot
+              let fileIndex = 0;
+              for (let i = 0; i < slotIndex; i++) {
+                if (customImagePreviews[i]?.source === 'file') {
+                  fileIndex++;
+                }
+              }
+              const refFile = customImageFiles[fileIndex];
+              if (refFile) {
+                const uploadResult = await uploadImages([refFile], project.id, false);
+                if (uploadResult.images && uploadResult.images.length > 0) {
+                  refUrl = uploadResult.images[0].url;
+                }
+              }
+            } else if (preview.url.startsWith('http://') || preview.url.startsWith('https://')) {
+              refUrl = preview.url;
+            } else if (preview.url.startsWith('/api/serve-image')) {
+              const localPath = decodeURIComponent(preview.url.split('path=')[1]);
+              const uploadResult = await uploadImageToS3(localPath, project.id);
+              refUrl = uploadResult.s3Url;
+            }
+
+            if (refUrl) {
+              referenceImageUrls.push(refUrl);
+              console.log(`[EditorView] Added reference image ${slotIndex}:`, refUrl.substring(0, 80) + '...');
+            }
+          } catch (error) {
+            console.error(`Error uploading reference image ${slotIndex}:`, error);
+            // Continue with other reference images
+          }
+        }
       }
 
       // Handle last frame (slot index 4) if provided
@@ -626,20 +623,20 @@ export default function EditorView() {
       console.log('[EditorView] Video generation mode:', lastFrameUrl ? 'Interpolation (start → end)' : 'Standard (from start frame)');
       console.log('[EditorView] Video generation parameters:', {
         baseImage: s3Url,
-        seedFrame: seedFrameUrl,
         lastFrame: lastFrameUrl,
         mode: lastFrameUrl ? 'interpolation' : 'standard',
       });
 
       const videoResponse = await generateVideo(
-        s3Url, // Base image (seed frame if available, otherwise generated image)
-        currentScene.videoPrompt || currentScene.imagePrompt, // Fallback to imagePrompt for backward compatibility
+        s3Url, // Base image from selected image
+        editedVideoPrompt || currentScene.videoPrompt || currentScene.imagePrompt, // Use edited value, fallback to imagePrompt for backward compatibility
         project.id,
         currentSceneIndex,
-        seedFrameUrl, // Pass seed frame URL for reference
-        currentScene.customDuration, // Pass custom duration if set
+        undefined, // seedFrameUrl removed - users manually save last frame when needed
+        (editedDuration ? Number(editedDuration) : currentScene.customDuration), // Use edited duration if set
         undefined, // subsceneIndex not used
-        modelParameters // Pass model-specific parameters (including last_frame if provided)
+        modelParameters, // Pass model-specific parameters (including last_frame if provided)
+        referenceImageUrls.length > 0 ? referenceImageUrls : undefined // Pass reference images if provided
       );
 
       // Poll for video completion (pass projectId and sceneIndex to trigger download)
@@ -779,10 +776,10 @@ export default function EditorView() {
       // Expanding: Initialize edit fields and enter edit mode
       setEditedPrompt(currentScene.imagePrompt);
       setEditedVideoPrompt(currentScene.videoPrompt || currentScene.imagePrompt); // Fallback to imagePrompt for backward compatibility
-      setEditedNegativePrompt(currentScene.negativePrompt || '');
+      setEditedNegativePrompt(currentScene.negativePrompt || '--no watermark --no warped face --no floating limbs --no text artifacts --no distorted hands --no blurry edges');
       setEditedDuration(currentScene.customDuration || '');
       // Initialize custom images - support both single string (legacy) and array
-      const imageInputs = currentScene.customImageInput 
+      const imageInputs = currentScene.customImageInput
         ? (Array.isArray(currentScene.customImageInput) ? currentScene.customImageInput : [currentScene.customImageInput])
         : [];
       setCustomImageFiles([]);
@@ -1184,17 +1181,16 @@ export default function EditorView() {
         negativePrompt: editedNegativePrompt.trim() || undefined,
         customDuration: editedDuration ? Number(editedDuration) : undefined,
         customImageInput: imageInput,
-        useSeedFrame: editedUseSeedFrame,
       });
     }, 1000); // 1 second debounce
-  }, [editedPrompt, editedVideoPrompt, editedNegativePrompt, editedDuration, editedUseSeedFrame, customImageFiles, customImagePreviews, droppedImageUrls, currentSceneIndex, project, updateSceneSettings]);
+  }, [editedPrompt, editedVideoPrompt, editedNegativePrompt, editedDuration, customImageFiles, customImagePreviews, droppedImageUrls, currentSceneIndex, project, updateSceneSettings]);
 
   // Auto-save on text field changes
   useEffect(() => {
     if (isPromptExpanded && editedPrompt.trim()) {
       autoSave(true); // Skip images for text-only changes
     }
-  }, [editedPrompt, editedVideoPrompt, editedNegativePrompt, editedDuration, editedUseSeedFrame, isPromptExpanded, autoSave]);
+  }, [editedPrompt, editedVideoPrompt, editedNegativePrompt, editedDuration, isPromptExpanded, autoSave]);
 
   // Auto-save when images change (with upload)
   useEffect(() => {
@@ -1219,25 +1215,24 @@ export default function EditorView() {
     }
 
     setEditedPrompt(currentScene.imagePrompt);
-    setEditedNegativePrompt(currentScene.negativePrompt || '');
+    setEditedNegativePrompt(currentScene.negativePrompt || '--no watermark --no warped face --no floating limbs --no text artifacts --no distorted hands --no blurry edges');
     setEditedDuration(currentScene.customDuration || '');
-    setEditedUseSeedFrame(currentScene.useSeedFrame !== undefined ? currentScene.useSeedFrame : false);
-    
+
     // Clean up blob URLs
     customImagePreviews.forEach(preview => {
       if (preview && preview.source === 'file' && preview.url.startsWith('blob:')) {
         URL.revokeObjectURL(preview.url);
       }
     });
-    
+
     // Reset to scene's current images
-    const imageInputs = currentScene.customImageInput 
+    const imageInputs = currentScene.customImageInput
       ? (Array.isArray(currentScene.customImageInput) ? currentScene.customImageInput : [currentScene.customImageInput])
       : [];
     setCustomImageFiles([]);
     setDroppedImageUrls([]);
     setCustomImagePreviews(imageInputs.map(url => ({ url, source: 'media' as const })));
-    
+
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -1269,7 +1264,7 @@ export default function EditorView() {
         id: `generating-${index}`,
         url: '',
         localPath: '',
-        prompt: currentScene.imagePrompt,
+        prompt: editedPrompt || currentScene.imagePrompt,
         replicateId: genImg.predictionId,
         createdAt: new Date().toISOString(),
       } as GeneratedImage);
@@ -1383,68 +1378,84 @@ export default function EditorView() {
                 </div>
               </div>
 
-              {/* Use Seed Frame Toggle */}
-              {currentSceneIndex > 0 && (() => {
-                const previousScene = scenes[currentSceneIndex - 1];
-                const selectedSeedFrameIndex = previousScene?.selectedSeedFrameIndex ?? 0;
-                const seedFrame = previousScene?.seedFrames?.[selectedSeedFrameIndex];
-                const seedFrameUrl = seedFrame?.url
-                  ? (seedFrame.url.startsWith('http://') || seedFrame.url.startsWith('https://') || seedFrame.url.startsWith('/api')
-                      ? seedFrame.url
-                      : `/api/serve-image?path=${encodeURIComponent(seedFrame.localPath || seedFrame.url)}`)
-                  : null;
+              {/* Save Last Frame Button */}
+              {sceneHasVideo && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      if (!project?.id || !sceneState?.videoLocalPath) return;
 
-                return (
-                  <div className="flex items-center gap-2">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editedUseSeedFrame}
-                        onChange={(e) => {
-                          const isChecked = e.target.checked;
-                          setEditedUseSeedFrame(isChecked);
+                      setIsExtractingFrames(true);
+                      try {
+                        const videoPath = sceneState.videoLocalPath;
 
-                          // Auto-populate seed image (slot 0) when checkbox is checked
-                          if (isChecked && seedFrameUrl) {
-                            const newPreviews = [...customImagePreviews];
-                            newPreviews[0] = {
-                              url: seedFrameUrl,
-                              source: 'url' as const
-                            };
-                            setCustomImagePreviews(newPreviews);
-                            console.log('[EditorView] Auto-populated seed image from previous scene seed frame');
-                          } else if (!isChecked) {
-                            // Clear seed image slot when unchecked (only if auto-populated)
-                            const newPreviews = [...customImagePreviews];
-                            if (newPreviews[0]?.source === 'url') {
-                              newPreviews[0] = null;
-                              setCustomImagePreviews(newPreviews);
-                              console.log('[EditorView] Cleared auto-populated seed image slot');
-                            }
-                          }
-                        }}
-                        className="w-4 h-4 text-white/60 bg-white/10 border-white/20 rounded focus:ring-white/40 focus:ring-2"
-                      />
-                      <span className="text-xs font-medium text-white/80">
-                        Use seed frame for continuity
-                      </span>
-                    </label>
-                    {editedUseSeedFrame && seedFrameUrl && (
-                      <div
-                        className="relative w-12 h-12 rounded border border-white/20 overflow-hidden cursor-pointer hover:opacity-80 transition-opacity"
-                        onDoubleClick={() => setEnlargedSeedFrameUrl(seedFrameUrl)}
-                        title="Double-click to enlarge"
-                      >
-                        <img
-                          src={seedFrameUrl}
-                          alt="Seed frame preview"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
+                        // Check if video path is a URL or local path
+                        if (videoPath.startsWith('http://') || videoPath.startsWith('https://')) {
+                          addChatMessage({
+                            role: 'agent',
+                            content: '❌ Cannot extract frame from URL. Please wait for video to download.',
+                            type: 'error',
+                          });
+                          return;
+                        }
+
+                        // Extract frames
+                        const response = await extractFrames(
+                          videoPath,
+                          project.id,
+                          currentSceneIndex
+                        );
+
+                        if (response.frames && response.frames.length > 0) {
+                          // Get the last frame
+                          const lastFrame = response.frames[response.frames.length - 1];
+
+                          // Upload to S3
+                          const { s3Url } = await uploadImageToS3(lastFrame.url, project.id);
+
+                          const uploadedFrame = {
+                            ...lastFrame,
+                            url: s3Url,
+                            localPath: lastFrame.url,
+                          };
+
+                          // Add to seed frames (prepend to existing)
+                          setSeedFrames(currentSceneIndex, [uploadedFrame, ...(seedFrames || [])]);
+
+                          addChatMessage({
+                            role: 'agent',
+                            content: '✓ Last frame saved to seed frames',
+                            type: 'status',
+                          });
+                        }
+                      } catch (error) {
+                        console.error('Error saving last frame:', error);
+                        addChatMessage({
+                          role: 'agent',
+                          content: '❌ Failed to save last frame',
+                          type: 'error',
+                          });
+                      } finally {
+                        setIsExtractingFrames(false);
+                      }
+                    }}
+                    disabled={isExtractingFrames}
+                    className="px-3 py-2 text-xs font-medium bg-white/10 text-white/80 rounded-lg hover:bg-white/20 disabled:opacity-50 transition-colors border border-white/20 flex items-center gap-2"
+                  >
+                    {isExtractingFrames ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4" />
+                        Save last frame
+                      </>
                     )}
-                  </div>
-                );
-              })()}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Image Input - Seed, Reference, and Last Frame in same row */}

@@ -54,6 +54,10 @@ export interface ProjectCoreSlice {
   addAdditionalMedia: (mediaItem: import('@/lib/types').AdditionalMediaItem) => void;
   removeAdditionalMedia: (mediaId: string) => void;
 
+  // Saved images management
+  addSavedImage: (savedImage: import('@/lib/types').SavedImage) => void;
+  removeSavedImage: (imageId: string) => void;
+
   reset: () => void;
 }
 

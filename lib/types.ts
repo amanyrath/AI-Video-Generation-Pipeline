@@ -133,6 +133,9 @@ export interface ProjectState {
 
   // Additional media (user-uploaded images, videos, audio for custom use)
   additionalMedia?: AdditionalMediaItem[];
+
+  // Saved images (images saved from generated content to media drawer for reuse across scenes)
+  savedImages?: SavedImage[];
 }
 
 // Additional media item (for user-uploaded custom media)
@@ -147,6 +150,19 @@ export interface AdditionalMediaItem {
   fileSize?: number;
   duration?: number; // For video/audio
   thumbnailUrl?: string; // For video
+}
+
+// Saved image item (images saved from generated content for reuse)
+export interface SavedImage {
+  id: string;                // UUID v4
+  url: string;               // S3 URL or API URL (for external access)
+  localPath: string;         // Full local file path (for server-side use)
+  s3Key?: string;            // S3 storage key
+  prompt?: string;           // Original prompt used for generation
+  sourceSceneIndex?: number; // Scene index where this was originally generated
+  sourceType: 'generated' | 'seed-frame' | 'uploaded' | 'background'; // Source of the image
+  savedAt: string;           // ISO 8601 timestamp when saved
+  name?: string;             // Optional custom name for the saved image
 }
 
 // Extended Scene type for project state (includes generation state)
