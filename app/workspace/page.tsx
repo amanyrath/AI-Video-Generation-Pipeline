@@ -5,6 +5,7 @@ import { useEffect, Suspense, useState } from 'react';
 import { useProjectStore, useProjectStore as projectStore } from '@/lib/state/project-store';
 import { useProjectAutoSave } from '@/lib/hooks/useProjectAutoSave';
 import { useAutoGenerate } from '@/lib/hooks/useAutoGenerate';
+import { useAutoGenerate } from '@/lib/hooks/useAutoGenerate';
 import LeftPanel from '@/components/workspace/LeftPanel';
 import MiddlePanel from '@/components/workspace/MiddlePanel';
 import RightPanel from '@/components/workspace/RightPanel';
@@ -18,6 +19,7 @@ function WorkspaceContent() {
   useProjectAutoSave();
   const searchParams = useSearchParams();
   const projectId = searchParams.get('projectId');
+  const autoGenerate = searchParams.get('autoGenerate') === 'true';
   const autoGenerate = searchParams.get('autoGenerate') === 'true';
   const { project, loadProject } = useProjectStore();
 

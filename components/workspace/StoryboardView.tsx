@@ -18,7 +18,7 @@ export default function StoryboardView() {
 
   const handleRegenerateStoryboard = async () => {
     if (!project) return;
-    
+
     addChatMessage({
       role: 'agent',
       content: 'Regenerating storyboard...',
@@ -27,12 +27,13 @@ export default function StoryboardView() {
 
     try {
       const response = await generateStoryboard(project.prompt, project.targetDuration);
-      
+
       if (response.success && response.scenes) {
         setStoryboard(response.scenes);
+        const sceneCount = response.scenes.length;
         addChatMessage({
           role: 'agent',
-          content: '✓ Storyboard regenerated with 5 scenes',
+          content: `✓ Storyboard regenerated with ${sceneCount} scenes`,
           type: 'status',
         });
       } else {

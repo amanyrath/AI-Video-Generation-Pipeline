@@ -166,9 +166,18 @@ export async function createImagePrediction(
 
   if (isNanoBanana) {
     // Nano-banana only accepts these specific parameters
+    // Build image_input array: combine seedImage (if provided) + reference images
+    const imageInputArray: string[] = [];
+    if (seedImage) {
+      imageInputArray.push(seedImage);
+    }
+    if (referenceImageUrls && referenceImageUrls.length > 0) {
+      imageInputArray.push(...referenceImageUrls);
+    }
+
     input = {
       prompt: prompt.trim(),
-      image_input: seedImage ? [seedImage, ...(referenceImageUrls || [])] : [],
+      image_input: imageInputArray,
       aspect_ratio: seedImage ? 'match_input_image' : '16:9',
       output_format: 'jpg', // Model default
     };
@@ -176,7 +185,7 @@ export async function createImagePrediction(
     if (randomSeed !== undefined) {
       input.seed = randomSeed;
     }
-    console.log(`${logPrefix} Using google/nano-banana-pro with image_input: ${seedImage} + ${referenceImageUrls?.length || 0} reference images`);
+    console.log(`${logPrefix} Using google/nano-banana-pro with image_input: ${imageInputArray.length} image(s) (seed: ${seedImage ? 'yes' : 'no'}, references: ${referenceImageUrls?.length || 0})`);
   } else {
     // Standard parameters for other models
     input = {
@@ -476,8 +485,8 @@ export async function downloadAndSaveImage(
     throw new Error('Project ID is required and must be a string');
   }
 
-  if (typeof sceneIndex !== 'number' || sceneIndex < 0 || sceneIndex > 4) {
-    throw new Error('Scene index must be a number between 0 and 4');
+  if (typeof sceneIndex !== 'number' || sceneIndex < 0) {
+    throw new Error('Scene index must be 0 or greater');
   }
 
   const logPrefix = '[ImageGenerator]';

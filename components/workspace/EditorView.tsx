@@ -722,7 +722,8 @@ export default function EditorView() {
 
         // Extract seed frames immediately after video generation (for the next scene)
         // Only extract if this isn't the last scene
-        if (currentSceneIndex < 4) {
+        const totalScenes = project.storyboard?.length || 5;
+        if (currentSceneIndex < totalScenes - 1) {
           setIsExtractingFrames(true);
           try {
             // Check if video path is a URL (Replicate URL) or local path
@@ -1857,7 +1858,7 @@ export default function EditorView() {
               </div>
 
               {/* Seed Frame Selection */}
-              {seedFrames.length > 0 && currentSceneIndex < 4 && (
+              {seedFrames.length > 0 && currentSceneIndex < (project.storyboard?.length || 5) - 1 && (
                 <div className="p-4 bg-white/5 rounded-lg border border-white/20">
                   <SeedFrameSelector
                     frames={seedFrames}

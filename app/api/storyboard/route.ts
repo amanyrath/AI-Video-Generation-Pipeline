@@ -1,9 +1,10 @@
 /**
  * Storyboard Generation API Route
- * 
+ *
  * POST /api/storyboard
- * 
- * Generates a 5-scene storyboard from a user prompt using OpenAI GPT-4o via OpenRouter.
+ *
+ * Generates a storyboard from a user prompt using OpenAI GPT-4o via OpenRouter.
+ * Scene count is determined by target duration: 30s = 3 scenes, 60s = 7 scenes
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -46,21 +47,22 @@ function validateRequest(body: any): string | null {
 
 /**
  * POST /api/storyboard
- * 
- * Generates a 5-scene storyboard from a user prompt.
- * 
+ *
+ * Generates a storyboard from a user prompt.
+ * Scene count: 30s = 3 scenes, 60s = 7 scenes
+ *
  * Request Body:
  * {
  *   prompt: string;           // Required: User's product/ad description
- *   targetDuration?: number;  // Optional: Target video duration (15, 30, or 60)
+ *   targetDuration?: number;  // Optional: Target video duration (30 or 60, default: 30)
  * }
- * 
+ *
  * Response:
  * {
  *   success: true;
- *   scenes: Scene[];
+ *   scenes: Scene[];  // 3 scenes for 30s, 7 scenes for 60s
  * }
- * 
+ *
  * Error Responses:
  * - 400: Invalid request
  * - 500: Generation failed
@@ -109,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     // Extract parameters
     const prompt = body.prompt.trim();
-    const targetDuration = body.targetDuration || 15;
+    const targetDuration = body.targetDuration || 30;
     const referenceImageUrls = body.referenceImageUrls || [];
 
     console.log('[Storyboard API] Request received:', {

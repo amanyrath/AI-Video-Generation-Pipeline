@@ -92,7 +92,7 @@ export async function PATCH(
     }
 
     const body = await req.json();
-    const { name, status, finalVideoUrl, finalVideoS3Key, characterDescription } = body;
+    const { name, status, finalVideoUrl, finalVideoS3Key, characterDescription, targetDuration } = body;
 
     const project = await prisma.project.update({
       where: { id },
@@ -102,6 +102,7 @@ export async function PATCH(
         ...(finalVideoUrl !== undefined && { finalVideoUrl }),
         ...(finalVideoS3Key !== undefined && { finalVideoS3Key }),
         ...(characterDescription !== undefined && { characterDescription }),
+        ...(targetDuration !== undefined && { targetDuration }),
       },
       include: {
         owner: {

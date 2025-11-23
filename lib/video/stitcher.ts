@@ -747,7 +747,7 @@ export async function stitchVideos(
   projectId: string,
   textOverlays?: TextOverlay[],
   style?: 'whimsical' | 'luxury' | 'offroad' | null
-): Promise<{ localPath: string; s3Url: string; s3Key: string; storedFile: StoredFile }> {
+): Promise<{ localPath: string; s3Url: string; s3Key?: string; storedFile: StoredFile }> {
   // Validate input
   if (!videoPaths || videoPaths.length === 0) {
     throw new Error('At least one video file is required');

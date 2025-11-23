@@ -680,22 +680,39 @@ export default function SceneCard({
       )}
       
       {/* Thumbnail Preview */}
-      {scenes[sceneIndex]?.generatedImages?.[0] && (
-        <div className="mt-2 rounded overflow-hidden border border-white/20">
-          {isVisible ? (
-            <img
-              src={formatImageUrl(scenes[sceneIndex].generatedImages[0])}
-              alt={`Scene ${sceneIndex + 1} preview`}
-              className="w-full aspect-video object-cover"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-full aspect-video bg-white/5 flex items-center justify-center">
-              <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-            </div>
-          )}
-        </div>
-      )}
+      {(() => {
+        const sceneState = scenes[sceneIndex];
+        const hasImages = sceneState?.generatedImages && sceneState.generatedImages.length > 0;
+
+        if (!hasImages) {
+          console.log(`[SceneCard ${sceneIndex}] No images:`, { sceneState, hasSceneState: !!sceneState, imageCount: sceneState?.generatedImages?.length });
+          return null;
+        }
+
+        const imageUrl = formatImageUrl(sceneState.generatedImages[0]);
+        console.log(`[SceneCard ${sceneIndex}] Image URL:`, imageUrl);
+
+        return (
+          <div className="mt-2 rounded overflow-hidden border border-white/20">
+            {isVisible ? (
+              <img
+                src={imageUrl}
+                alt={`Scene ${sceneIndex + 1} preview`}
+                className="w-full aspect-video object-cover"
+                loading="lazy"
+                onError={(e) => {
+                  console.error(`[SceneCard ${sceneIndex}] Image failed to load:`, imageUrl);
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="w-full aspect-video bg-white/5 flex items-center justify-center">
+                <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Hover Effect Indicator */}
       <div className="absolute inset-0 rounded-lg border-2 border-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />

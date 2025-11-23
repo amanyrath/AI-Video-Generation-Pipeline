@@ -1,261 +1,391 @@
 /**
- * Auto-Generation Hook
- *
- * Handles automatic generation of all scenes in parallel:
- * - Generates 1 image per scene
- * - Uses that image + 3 reference photos to generate video
- * - For indoor scenes, uses indoor reference photos
- * - All operations run in parallel and update state as they complete
+ * Hook for auto-generating entire video workflow
+ * Automatically generates images and videos for all scenes in sequence
  */
 
-import { useEffect, useRef } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import { useProjectStore } from '@/lib/state/project-store';
+import { useEffect, useRef, useState } from 'react';
+import { useProjectStore, useSceneStore, useUIStore } from '@/lib/state/project-store';
+import {
+  generateImage,
+  pollImageStatus,
+  generateVideo,
+  pollVideoStatus,
+  extractFrames,
+} from '@/lib/api-client';
+import { ImageGenerationRequest } from '@/lib/types';
+import { processBatch } from '@/lib/utils/batch-processor';
+import { getImageRateLimit, getVideoRateLimit } from '@/lib/config/rate-limits';
+import { getEffectiveImageModel, getEffectiveVideoModel } from '@/lib/config/model-runtime';
 
 interface UseAutoGenerateOptions {
-  enabled: boolean;
+  enabled?: boolean;
   onComplete?: () => void;
   onError?: (error: Error) => void;
 }
 
-export function useAutoGenerate({ enabled, onComplete, onError }: UseAutoGenerateOptions) {
-  const hasRun = useRef(false);
+export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
+  const { enabled = false, onComplete, onError } = options;
+
   const { project } = useProjectStore();
+  const {
+    scenes,
+    setSceneStatus,
+    addGeneratedImage,
+    selectImage,
+    setVideoPath,
+    setSeedFrames,
+    selectSeedFrame,
+  } = useSceneStore();
+  const { addChatMessage } = useUIStore();
+
+  const [isRunning, setIsRunning] = useState(false);
+  const hasStartedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    console.log('[AutoGenerate] Hook triggered:', { enabled, hasRun: hasRun.current, hasProject: !!project });
-
-    if (!enabled) {
-      console.log('[AutoGenerate] Not enabled, skipping');
+    // Only run once when enabled
+    if (!enabled || hasStartedRef.current || !project || isRunning) {
       return;
     }
 
-    if (hasRun.current) {
-      console.log('[AutoGenerate] Already ran, skipping');
-      return;
-    }
-
-    if (!project) {
-      console.log('[AutoGenerate] No project, skipping');
-      return;
-    }
+    hasStartedRef.current = true;
+    setIsRunning(true);
+    abortControllerRef.current = new AbortController();
 
     const runAutoGeneration = async () => {
       try {
-        console.log('[AutoGenerate] Starting automatic generation - waiting for storyboard...');
-        hasRun.current = true;
-
-        // Wait for storyboard to be available (it might still be generating)
-        const maxWaitTime = 60000; // 60 seconds max wait
-        const pollInterval = 1000; // Check every second
-        const startTime = Date.now();
-
-        let currentStoryboard = project.storyboard;
-        while ((!currentStoryboard || currentStoryboard.length === 0) && (Date.now() - startTime < maxWaitTime)) {
-          console.log('[AutoGenerate] Waiting for storyboard to be ready...');
-          await new Promise(resolve => setTimeout(resolve, pollInterval));
-
-          // Get latest project state
-          const { project: latestProject } = useProjectStore.getState();
-          if (latestProject?.storyboard) {
-            currentStoryboard = latestProject.storyboard;
-          }
-        }
-
-        const { storyboard, uploadedImages } = useProjectStore.getState().project || {};
-        if (!storyboard || storyboard.length === 0) {
-          throw new Error('No storyboard available for auto-generation after waiting');
-        }
-
-        console.log(`[AutoGenerate] ✓ Storyboard is ready with ${storyboard.length} scenes`);
-
-        // Get reference images (select up to 3)
-        const referenceImages = uploadedImages?.slice(0, 3) || [];
-        const referenceImageUrls = referenceImages.map(img => img.url);
-
-        console.log(`[AutoGenerate] Using ${referenceImageUrls.length} reference images:`, referenceImageUrls);
-        console.log(`[AutoGenerate] Generating ${storyboard.length} scenes - images and videos will run in parallel`);
-        console.log(`[AutoGenerate] Strategy: Start video generation immediately after each image completes`);
-
-        // Generate all scenes in parallel - each scene generates image, then immediately starts video
-        const scenePromises = storyboard.map(async (scene, index) => {
-          try {
-            console.log(`[AutoGenerate] Scene ${index} - Starting pipeline (image → video)`);
-
-            // Determine if this is an indoor scene
-            const isIndoorScene = scene.description.toLowerCase().includes('indoor') ||
-                                 scene.description.toLowerCase().includes('interior') ||
-                                 scene.description.toLowerCase().includes('inside');
-
-            // Filter reference images for indoor scenes if needed
-            const sceneReferenceUrls = isIndoorScene
-              ? referenceImageUrls.filter(url =>
-                  url.toLowerCase().includes('indoor') || url.toLowerCase().includes('interior')
-                )
-              : referenceImageUrls;
-
-            // Use all references if filtering resulted in 0
-            const finalReferenceUrls = sceneReferenceUrls.length > 0 ? sceneReferenceUrls : referenceImageUrls;
-
-            // STEP 1: Generate image
-            console.log(`[AutoGenerate] Scene ${index} - Requesting image generation`);
-            const imageResponse = await fetch('/api/generate-image', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                prompt: scene.imagePrompt,
-                projectId: project.id,
-                sceneIndex: index,
-                referenceImageUrls: finalReferenceUrls,
-                negativePrompt: scene.negativePrompt,
-              }),
-            });
-
-            if (!imageResponse.ok) {
-              const errorData = await imageResponse.json();
-              console.error(`[AutoGenerate] Scene ${index} - Image generation failed:`, errorData);
-              throw new Error(`Failed to start image generation for scene ${index}: ${errorData.error || 'Unknown error'}`);
-            }
-
-            const imageData = await imageResponse.json();
-            console.log(`[AutoGenerate] Scene ${index} - Image prediction created:`, imageData.predictionId);
-
-            // STEP 2: Poll for image completion
-            const image = await pollImageStatus(imageData.predictionId, project.id, index);
-            console.log(`[AutoGenerate] Scene ${index} - Image completed:`, image.url);
-
-            // STEP 2.5: Add image to project state so it appears in UI
-            const { addGeneratedImage } = useProjectStore.getState();
-            addGeneratedImage(index, image);
-            console.log(`[AutoGenerate] Scene ${index} - Image added to state for UI display`);
-
-            // STEP 3: Immediately start video generation (don't wait for other images)
-            const imageUrlForVideo = image.url || image.localPath;
-            console.log(`[AutoGenerate] Scene ${index} - Requesting video generation`);
-
-            const videoResponse = await fetch('/api/generate-video', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                imageUrl: imageUrlForVideo,
-                prompt: scene.videoPrompt || scene.imagePrompt,
-                sceneIndex: index,
-                projectId: project.id,
-                duration: scene.customDuration || scene.suggestedDuration,
-                referenceImageUrls: finalReferenceUrls, // Re-enabled: S3 bucket is now publicly accessible
-              }),
-            });
-
-            if (!videoResponse.ok) {
-              const errorData = await videoResponse.json();
-              console.error(`[AutoGenerate] Scene ${index} - Video generation failed:`, errorData);
-              throw new Error(`Failed to start video generation for scene ${index}: ${errorData.error || 'Unknown error'}`);
-            }
-
-            const videoData = await videoResponse.json();
-            console.log(`[AutoGenerate] Scene ${index} - Video prediction created:`, videoData.data.predictionId);
-
-            // STEP 4: Poll for video completion
-            const video = await pollVideoStatus(videoData.data.predictionId, project.id, index);
-            console.log(`[AutoGenerate] Scene ${index} - Video completed: ${video.videoPath}`);
-
-            // STEP 4.5: Add video to project state so it appears in UI
-            const { addGeneratedVideo, initializeTimelineClips } = useProjectStore.getState();
-            addGeneratedVideo(index, {
-              id: uuidv4(),
-              url: video.videoPath.startsWith('http://') || video.videoPath.startsWith('https://')
-                ? video.videoPath
-                : `/api/serve-video?path=${encodeURIComponent(video.videoPath)}`,
-              localPath: video.videoPath,
-              actualDuration: video.duration,
-              timestamp: new Date().toISOString(),
-            });
-            console.log(`[AutoGenerate] Scene ${index} - Video added to state for UI display`);
-
-            // STEP 4.6: Refresh timeline to include the new video
-            try {
-              initializeTimelineClips();
-              console.log(`[AutoGenerate] Scene ${index} - Timeline refreshed with new video`);
-            } catch (timelineError) {
-              console.warn(`[AutoGenerate] Scene ${index} - Failed to refresh timeline:`, timelineError);
-              // Don't fail the whole generation if timeline refresh fails
-            }
-
-            console.log(`[AutoGenerate] Scene ${index} - COMPLETE (image + video)`);
-            return { sceneIndex: index, success: true };
-          } catch (error) {
-            console.error(`[AutoGenerate] Scene ${index} - Failed:`, error);
-            return { sceneIndex: index, success: false, error };
-          }
+        console.log('[useAutoGenerate] Starting auto-generation for all scenes');
+        addChatMessage({
+          role: 'agent',
+          content: '🚀 Starting auto-generation for entire video...',
+          type: 'status',
         });
 
-        // Wait for all scenes to complete (each scene runs its full pipeline independently)
-        const results = await Promise.all(scenePromises);
-        const successCount = results.filter(r => r.success).length;
-        const failCount = results.filter(r => !r.success).length;
+        if (!project.storyboard || project.storyboard.length === 0) {
+          throw new Error('No storyboard found. Please create a project first.');
+        }
 
-        console.log(`[AutoGenerate] ALL COMPLETE! Success: ${successCount}/${storyboard.length} scenes, Failed: ${failCount}`);
-        onComplete?.();
+        // Get rate limits for current models
+        const imageModel = getEffectiveImageModel();
+        const videoModel = getEffectiveVideoModel();
+        const imageRateLimit = getImageRateLimit(imageModel);
+        const videoRateLimit = getVideoRateLimit(videoModel);
+
+        console.log('[useAutoGenerate] Rate limits:', {
+          imageModel,
+          videoModel,
+          imageLimit: imageRateLimit,
+          videoLimit: videoRateLimit,
+        });
+
+        // PHASE 1: Generate all images with rate limiting
+        addChatMessage({
+          role: 'agent',
+          content: `🎨 Generating images (max ${imageRateLimit.maxConcurrent} concurrent)...`,
+          type: 'status',
+        });
+
+        const imageTasks = project.storyboard.map((scene, sceneIndex) => {
+          return async () => {
+            try {
+              console.log(`[useAutoGenerate] Scene ${sceneIndex}: Starting image generation`);
+              const generatedImage = await generateImageForScene(sceneIndex);
+              console.log(`[useAutoGenerate] Scene ${sceneIndex}: ✓ Image generated`);
+              return { sceneIndex, image: generatedImage };
+            } catch (error) {
+              console.error(`[useAutoGenerate] Scene ${sceneIndex} image failed:`, error);
+              addChatMessage({
+                role: 'agent',
+                content: `❌ Scene ${sceneIndex + 1} image failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                type: 'error',
+              });
+              throw error;
+            }
+          };
+        });
+
+        let imageResults: any[];
+        try {
+          imageResults = await processBatch(imageTasks, {
+            maxConcurrent: imageRateLimit.maxConcurrent,
+            minDelayBetweenRequests: imageRateLimit.minDelayBetweenRequests,
+            onProgress: (completed, total) => {
+              console.log(`[useAutoGenerate] Images: ${completed}/${total} completed`);
+            },
+          });
+        } catch (error: any) {
+          // Batch processing failed - some images didn't generate
+          const errors = error.errors || [];
+          const results = error.results || [];
+          const successCount = results.filter((r: any) => r !== undefined).length;
+
+          console.error(`[useAutoGenerate] Image generation partially failed: ${successCount}/${project.storyboard.length} succeeded`);
+          addChatMessage({
+            role: 'agent',
+            content: `⚠️ Image generation completed with errors: ${successCount}/${project.storyboard.length} scenes succeeded`,
+            type: 'error',
+          });
+
+          // Stop the workflow - we can't proceed without images
+          throw new Error(`Image generation failed: Only ${successCount}/${project.storyboard.length} images generated successfully`);
+        }
+
+        const successfulImages = imageResults.filter((r: any) => r !== undefined).length;
+        addChatMessage({
+          role: 'agent',
+          content: `✓ All ${successfulImages} images generated`,
+          type: 'status',
+        });
+
+        // PHASE 2: Generate all videos with rate limiting
+        addChatMessage({
+          role: 'agent',
+          content: `🎬 Generating videos (max ${videoRateLimit.maxConcurrent} concurrent)...`,
+          type: 'status',
+        });
+
+        const videoTasks = project.storyboard.map((scene, sceneIndex) => {
+          return async () => {
+            try {
+              console.log(`[useAutoGenerate] Scene ${sceneIndex}: Starting video generation`);
+              const imageData = imageResults[sceneIndex];
+
+              // Skip if image generation failed for this scene
+              if (!imageData || !imageData.image) {
+                console.warn(`[useAutoGenerate] Scene ${sceneIndex}: Skipping video generation - no image available`);
+                throw new Error(`No image available for scene ${sceneIndex + 1}`);
+              }
+
+              await generateVideoForScene(sceneIndex, imageData.image);
+              console.log(`[useAutoGenerate] Scene ${sceneIndex}: ✓ Video generated`);
+
+              addChatMessage({
+                role: 'agent',
+                content: `✓ Scene ${sceneIndex + 1} completed`,
+                type: 'status',
+              });
+
+              return { sceneIndex, success: true };
+            } catch (error) {
+              console.error(`[useAutoGenerate] Scene ${sceneIndex} video failed:`, error);
+              addChatMessage({
+                role: 'agent',
+                content: `❌ Scene ${sceneIndex + 1} video failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                type: 'error',
+              });
+              throw error;
+            }
+          };
+        });
+
+        let videoResults: any[];
+        try {
+          videoResults = await processBatch(videoTasks, {
+            maxConcurrent: videoRateLimit.maxConcurrent,
+            minDelayBetweenRequests: videoRateLimit.minDelayBetweenRequests,
+            onProgress: (completed, total) => {
+              console.log(`[useAutoGenerate] Videos: ${completed}/${total} completed`);
+            },
+          });
+        } catch (error: any) {
+          // Batch processing failed - some videos didn't generate
+          const errors = error.errors || [];
+          const results = error.results || [];
+          const successCount = results.filter((r: any) => r !== undefined).length;
+
+          console.error(`[useAutoGenerate] Video generation partially failed: ${successCount}/${project.storyboard.length} succeeded`);
+          addChatMessage({
+            role: 'agent',
+            content: `⚠️ Video generation completed with errors: ${successCount}/${project.storyboard.length} scenes succeeded`,
+            type: 'error',
+          });
+
+          // Stop the workflow - we can't proceed with incomplete videos
+          throw new Error(`Video generation failed: Only ${successCount}/${project.storyboard.length} videos generated successfully`);
+        }
+
+        const successfulVideos = videoResults.filter((r: any) => r !== undefined).length;
+        addChatMessage({
+          role: 'agent',
+          content: `✓ All ${successfulVideos} videos generated`,
+          type: 'status',
+        });
+
+        // PHASE 3: Extract frames sequentially (fast operation)
+        for (let sceneIndex = 0; sceneIndex < project.storyboard.length - 1; sceneIndex++) {
+          if (abortControllerRef.current?.signal.aborted) {
+            throw new Error('Auto-generation cancelled');
+          }
+          await extractFramesForScene(sceneIndex);
+        }
+
+        console.log(`[useAutoGenerate] ✓ All ${project.storyboard.length} scenes completed`);
+
+        console.log('[useAutoGenerate] Auto-generation completed successfully');
+        addChatMessage({
+          role: 'agent',
+          content: '✨ Auto-generation complete! All scenes have been generated.',
+          type: 'status',
+        });
+
+        if (onComplete) {
+          onComplete();
+        }
       } catch (error) {
-        console.error('[AutoGenerate] Fatal error:', error);
-        onError?.(error as Error);
+        console.error('[useAutoGenerate] Auto-generation failed:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        addChatMessage({
+          role: 'agent',
+          content: `❌ Auto-generation failed: ${errorMessage}`,
+          type: 'error',
+        });
+
+        if (onError) {
+          onError(error instanceof Error ? error : new Error(errorMessage));
+        }
+      } finally {
+        setIsRunning(false);
+        abortControllerRef.current = null;
       }
     };
 
     runAutoGeneration();
-  }, [enabled, project, onComplete, onError]);
-}
+  }, [enabled, project, isRunning]);
 
-// Helper function to poll image status
-async function pollImageStatus(predictionId: string, projectId: string, sceneIndex: number): Promise<any> {
-  const maxAttempts = 120; // 10 minutes at 5s intervals
-  const interval = 5000;
+  // Generate image for a specific scene
+  const generateImageForScene = async (sceneIndex: number) => {
+    const scene = project!.storyboard[sceneIndex];
+    const uploadedImages = project!.uploadedImages || [];
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const statusResponse = await fetch(
-      `/api/generate-image/${predictionId}?projectId=${projectId}&sceneIndex=${sceneIndex}`
-    );
-    const statusData = await statusResponse.json();
+    console.log(`[useAutoGenerate] Generating image for scene ${sceneIndex}`);
+    setSceneStatus(sceneIndex, 'generating_image');
 
-    if (statusData.status === 'succeeded' && statusData.image) {
-      return statusData.image;
-    } else if (statusData.status === 'failed' || statusData.status === 'canceled') {
-      throw new Error(statusData.error || 'Image generation failed');
+    // Get seed frame from previous scene if available
+    let seedFrameUrl: string | undefined;
+    if (sceneIndex > 0 && scenes[sceneIndex - 1]?.seedFrames && scenes[sceneIndex - 1].seedFrames!.length > 0) {
+      const prevScene = scenes[sceneIndex - 1];
+      const selectedFrameIndex = prevScene.selectedSeedFrameIndex ?? 0;
+      seedFrameUrl = prevScene.seedFrames![selectedFrameIndex]?.url;
     }
 
-    // Wait before next poll
-    await new Promise(resolve => setTimeout(resolve, interval));
-  }
-
-  throw new Error('Image generation timed out');
-}
-
-// Helper function to poll video status
-async function pollVideoStatus(predictionId: string, projectId: string, sceneIndex: number): Promise<any> {
-  const maxAttempts = 240; // 20 minutes at 5s intervals
-  const interval = 5000;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const statusResponse = await fetch(
-      `/api/generate-video/${predictionId}?projectId=${projectId}&sceneIndex=${sceneIndex}`
-    );
-    const statusData = await statusResponse.json();
-
-    // Check if succeeded
-    if (statusData.success && statusData.data?.status === 'succeeded') {
-      return {
-        videoPath: statusData.data.video?.localPath || statusData.data.output,
-        duration: statusData.data.video?.duration,
-      };
-    } else if (statusData.data?.status === 'failed' || statusData.data?.status === 'canceled') {
-      throw new Error(statusData.error || 'Video generation failed');
-    } else if (!statusData.success) {
-      throw new Error(statusData.error || 'Video generation failed');
+    // Build reference image URLs (reference images from brand identity)
+    const referenceImageUrls = uploadedImages.map(img => img.url);
+    console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using ${referenceImageUrls.length} brand assets as reference images`);
+    if (referenceImageUrls.length > 0) {
+      console.log(`[useAutoGenerate] Scene ${sceneIndex}: Reference URLs:`, referenceImageUrls);
     }
 
-    // Wait before next poll
-    await new Promise(resolve => setTimeout(resolve, interval));
-  }
+    const imageRequest: ImageGenerationRequest = {
+      projectId: project!.id,
+      sceneIndex,
+      prompt: scene.imagePrompt,
+      negativePrompt: scene.negativePrompt,
+      referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
+      seedFrame: seedFrameUrl,
+    };
 
-  throw new Error('Video generation timed out');
+    const imageResponse = await generateImage(imageRequest);
+
+    if (!imageResponse.predictionId) {
+      throw new Error(`Image generation failed to start for scene ${sceneIndex + 1}`);
+    }
+
+    // Poll for completion
+    const imageStatus = await pollImageStatus(imageResponse.predictionId, {
+      projectId: project!.id,
+      sceneIndex,
+    });
+
+    if (!imageStatus || imageStatus.status !== 'succeeded' || !imageStatus.image) {
+      throw new Error(`Image generation failed for scene ${sceneIndex + 1}`);
+    }
+
+    // Add to store
+    addGeneratedImage(sceneIndex, imageStatus.image);
+    selectImage(sceneIndex, imageStatus.image.id);
+    setSceneStatus(sceneIndex, 'image_ready');
+
+    console.log(`[useAutoGenerate] Image generated for scene ${sceneIndex}`);
+
+    // Return the generated image for immediate use
+    return imageStatus.image;
+  };
+
+  // Generate video for a specific scene
+  const generateVideoForScene = async (sceneIndex: number, imageToUse?: any) => {
+    const scene = project!.storyboard[sceneIndex];
+
+    // Use the provided image or fall back to checking scene state
+    let selectedImage = imageToUse;
+    if (!selectedImage) {
+      const sceneState = scenes[sceneIndex];
+      if (!sceneState?.selectedImageId) {
+        throw new Error(`No selected image for scene ${sceneIndex + 1}`);
+      }
+      selectedImage = sceneState.generatedImages?.find(
+        img => img.id === sceneState.selectedImageId
+      );
+      if (!selectedImage) {
+        throw new Error(`Selected image not found for scene ${sceneIndex + 1}`);
+      }
+    }
+
+    console.log(`[useAutoGenerate] Generating video for scene ${sceneIndex}`);
+    setSceneStatus(sceneIndex, 'generating_video');
+
+    const videoResponse = await generateVideo(
+      selectedImage.url,
+      scene.videoPrompt || scene.imagePrompt,
+      project!.id,
+      sceneIndex,
+      undefined, // seedFrame
+      scene.customDuration || scene.suggestedDuration
+    );
+
+    // Poll for completion
+    const completedVideo = await pollVideoStatus(videoResponse.predictionId, {
+      projectId: project!.id,
+      sceneIndex,
+    });
+
+    if (!completedVideo || completedVideo.status !== 'succeeded' || !completedVideo.videoPath) {
+      throw new Error(`Video generation failed for scene ${sceneIndex + 1}`);
+    }
+
+    // Update store with video path
+    setVideoPath(sceneIndex, completedVideo.videoPath, completedVideo.actualDuration || scene.suggestedDuration);
+    setSceneStatus(sceneIndex, 'video_ready');
+
+    console.log(`[useAutoGenerate] Video generated for scene ${sceneIndex}`);
+  };
+
+  // Extract frames for seed frame selection
+  const extractFramesForScene = async (sceneIndex: number) => {
+    const sceneState = scenes[sceneIndex];
+
+    if (!sceneState?.videoLocalPath) {
+      console.warn(`[useAutoGenerate] No video path for scene ${sceneIndex}, skipping frame extraction`);
+      return;
+    }
+
+    console.log(`[useAutoGenerate] Extracting frames for scene ${sceneIndex}`);
+
+    const framesResponse = await extractFrames(
+      sceneState.videoLocalPath,
+      project!.id,
+      sceneIndex
+    );
+
+    if (framesResponse.frames && framesResponse.frames.length > 0) {
+      setSeedFrames(sceneIndex, framesResponse.frames);
+      // Auto-select the middle frame
+      const middleIndex = Math.floor(framesResponse.frames.length / 2);
+      selectSeedFrame(sceneIndex, middleIndex);
+      console.log(`[useAutoGenerate] Extracted ${framesResponse.frames.length} frames for scene ${sceneIndex}`);
+    }
+  };
+
+  return {
+    isRunning,
+  };
 }

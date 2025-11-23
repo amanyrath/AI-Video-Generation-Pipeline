@@ -127,9 +127,10 @@ export const TestHelpers = {
     }
 
     store.setSceneStatus(sceneIndex, 'generating_image');
+    const totalScenes = store.project?.storyboard?.length || 5;
     store.addChatMessage({
       role: 'agent',
-      content: `Generating image for Scene ${sceneIndex + 1}/5...`,
+      content: `Generating image for Scene ${sceneIndex + 1}/${totalScenes}...`,
       type: 'status',
     });
 
@@ -168,9 +169,10 @@ export const TestHelpers = {
     }
 
     store.setSceneStatus(sceneIndex, 'generating_video');
+    const totalScenes = store.project?.storyboard?.length || 5;
     store.addChatMessage({
       role: 'agent',
-      content: `Generating video for Scene ${sceneIndex + 1}/5...`,
+      content: `Generating video for Scene ${sceneIndex + 1}/${totalScenes}...`,
       type: 'status',
     });
 

@@ -335,9 +335,10 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
 
 export const IMAGE_CONFIG = {
   // Model identifier for Replicate
-  // google/nano-banana-pro is the default for image-to-image generation with precise color control
+  // Note: Nano Banana Pro is optimized for object consistency with reference images
+  // It uses image_input parameter to combine seed + reference images
   model: process.env.REPLICATE_IMAGE_MODEL || 'google/nano-banana-pro',
-
+  
   // Image generation parameters
   aspectRatio: '16:9' as const,
   outputFormat: 'png' as const,

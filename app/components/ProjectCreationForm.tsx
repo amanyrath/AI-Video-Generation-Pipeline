@@ -6,7 +6,7 @@ import { useProjectStore } from '@/lib/state/project-store';
 
 export default function ProjectCreationForm() {
   const [prompt, setPrompt] = useState('');
-  const [duration, setDuration] = useState(15);
+  const [duration, setDuration] = useState(30);
   const [isGenerating, setIsGenerating] = useState(false);
   
   const { createProject, setStoryboard } = useProjectStore();
@@ -85,8 +85,11 @@ export default function ProjectCreationForm() {
           <label htmlFor="duration" className="block text-sm font-medium mb-2">
             Target Duration
           </label>
-          <div className="grid grid-cols-3 gap-4">
-            {[15, 30, 60].map((sec) => (
+          <div className="grid grid-cols-2 gap-4">
+            {[
+              { duration: 30, label: '30s', subtitle: '3 scenes' },
+              { duration: 60, label: '60s', subtitle: '7 scenes' }
+            ].map(({ duration: sec, label, subtitle }) => (
               <button
                 key={sec}
                 type="button"
@@ -98,10 +101,8 @@ export default function ProjectCreationForm() {
                 }`}
                 disabled={isGenerating}
               >
-                <div className="text-2xl font-bold">{sec}s</div>
-                <div className="text-xs text-gray-600">
-                  {sec === 15 ? 'Quick' : sec === 30 ? 'Standard' : 'Long'}
-                </div>
+                <div className="text-2xl font-bold">{label}</div>
+                <div className="text-xs text-gray-600">{subtitle}</div>
               </button>
             ))}
           </div>
