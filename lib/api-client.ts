@@ -426,7 +426,8 @@ export async function generateVideo(
   seedFrame?: string,
   duration?: number, // Optional: Scene-specific duration
   subsceneIndex?: number, // Optional: For subscene-based workflow
-  modelParameters?: Record<string, any> // Optional: Model-specific parameters
+  modelParameters?: Record<string, any>, // Optional: Model-specific parameters
+  referenceImageUrls?: string[] // Optional: Reference images for consistency
 ): Promise<{ predictionId: string; status: string }> {
   const url = `${API_BASE_URL}/api/generate-video`;
   return retryRequest(async () => {
@@ -445,6 +446,7 @@ export async function generateVideo(
         duration, // Pass duration if provided
         subsceneIndex, // Pass subscene index if provided
         modelParameters, // Pass model parameters if provided
+        referenceImageUrls, // Pass reference images if provided
       }),
     });
 

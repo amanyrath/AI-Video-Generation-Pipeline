@@ -17,7 +17,6 @@ import {
 } from '@/lib/ai/image-generator';
 import { ImageGenerationRequest, ImageGenerationResponse } from '@/lib/types';
 import { uploadToS3, getS3Url } from '@/lib/storage/s3-uploader';
-import { DEFAULT_RUNTIME_CONFIG } from '@/lib/config/model-runtime';
 import path from 'path';
 
 // ============================================================================
@@ -411,18 +410,27 @@ export async function POST(request: NextRequest) {
     // IP-Adapter scale: 1.0 for maximum reference image influence (let reference image define the object)
     const ipAdapterScale = 1.0;
     const ipAdapterImages: string[] = [];
-    
-    // Always include reference images for object consistency (primary driver)
-    if (referenceImageUrls.length > 0) {
-      ipAdapterImages.push(...referenceImageUrls);
-    }
-    
-    // For Scenes 1-4: Add seed frame for visual continuity (secondary)
-    if (sceneIndex > 0 && seedFrameUrl) {
+
+    // When using last frame mode (seed frame without reference images), use seed frame as the reference via IP-Adapter
+    const isLastFrameMode = sceneIndex > 0 && seedFrameUrl && referenceImageUrls.length === 0;
+
+    if (isLastFrameMode && seedFrameUrl) {
+      // Last frame mode: Use seed frame as the sole reference image
       ipAdapterImages.push(seedFrameUrl);
-      console.log(`[Image Generation API] Scene ${sceneIndex}: Using seed frame via IP-Adapter for visual continuity`);
+      console.log(`[Image Generation API] Scene ${sceneIndex}: Last frame mode - Using seed frame as sole reference via IP-Adapter`);
+    } else {
+      // Standard mode: Include reference images for object consistency (primary driver)
+      if (referenceImageUrls.length > 0) {
+        ipAdapterImages.push(...referenceImageUrls);
+      }
+
+      // For Scenes 1-4: Add seed frame for visual continuity (secondary)
+      if (sceneIndex > 0 && seedFrameUrl) {
+        ipAdapterImages.push(seedFrameUrl);
+        console.log(`[Image Generation API] Scene ${sceneIndex}: Using seed frame via IP-Adapter for visual continuity`);
+      }
     }
-    
+
     const useIpAdapter = ipAdapterImages.length > 0;
     
     const predictionId = await createImagePredictionWithRetry(

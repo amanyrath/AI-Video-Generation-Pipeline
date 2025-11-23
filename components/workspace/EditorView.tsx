@@ -352,6 +352,10 @@ export default function EditorView() {
           });
           referenceImageUrls = [...customImageUrls, ...referenceImageUrls].slice(0, 3);
           console.log(`[EditorView] Scene ${currentSceneIndex}: Using ${Math.min(customImageUrls.length, 3)} custom image(s) as reference images via IP-Adapter`);
+        } else if (referenceImageUrls.length > 0) {
+          // Use first reference image as seed image for I2I (for all scenes)
+          seedImageUrl = referenceImageUrls[0];
+          console.log(`[EditorView] Scene ${currentSceneIndex}: Using reference image as seed image for I2I:`, seedImageUrl.substring(0, 80) + '...');
         } else if (currentSceneIndex > 0) {
           const previousScene = scenes[currentSceneIndex - 1];
           if (previousScene?.seedFrames && previousScene.seedFrames.length > 0) {
@@ -372,10 +376,6 @@ export default function EditorView() {
               console.log(`[EditorView] Scene ${currentSceneIndex}: Using seed frame as seed image for image-to-image generation:`, seedImageUrl.substring(0, 80) + '...');
             }
           }
-        } else if (referenceImageUrls.length > 0) {
-          // For Scene 0: Use reference image as seed image if available
-          seedImageUrl = referenceImageUrls[0];
-          console.log(`[EditorView] Scene ${currentSceneIndex}: Using reference image as seed image:`, seedImageUrl.substring(0, 80) + '...');
         }
       }
 

@@ -165,6 +165,7 @@ export default function SceneCard({
       });
 
       // Get reference images from scene composition box (referenceImageId) or project (uploaded images for object consistency)
+      // IMPORTANT: When using seed frame (last frame), do NOT include reference images
       let referenceImageUrls: string[] = [];
 
       // Build search context for image lookups
@@ -173,31 +174,41 @@ export default function SceneCard({
         scenes,
       };
 
-      // Priority 1: Use reference image from scene composition box if available
-      if (scene.referenceImageId) {
-        const referenceImageUrl = findImageUrlById(scene.referenceImageId, searchContext);
+      // Check if we're using seed frame (last frame) mode
+      const usingSeedFrame = sceneIndex > 0 && scene.useSeedFrame === true;
 
-        if (referenceImageUrl) {
-          referenceImageUrls = [referenceImageUrl];
-          console.log(
-            `[SceneCard] Scene ${sceneIndex}: Using reference image from composition box:`,
-            referenceImageUrl.substring(0, 80) + '...'
-          );
-        } else {
-          console.warn(
-            `[SceneCard] Scene ${sceneIndex}: Reference image ID "${scene.referenceImageId}" not found`
-          );
-        }
-      }
+      if (!usingSeedFrame) {
+        // Only add reference images if NOT using seed frame mode
+        // Priority 1: Use reference image from scene composition box if available
+        if (scene.referenceImageId) {
+          const referenceImageUrl = findImageUrlById(scene.referenceImageId, searchContext);
 
-      // Priority 2: Fallback to project-level reference images if no scene-specific reference
-      if (referenceImageUrls.length === 0) {
-        referenceImageUrls = (project.referenceImageUrls || []).slice(0, SCENE_CONSTANTS.MAX_REFERENCE_IMAGES);
-        if (referenceImageUrls.length > 0) {
-          console.log(
-            `[SceneCard] Scene ${sceneIndex}: Using ${referenceImageUrls.length} project-level reference image(s)`
-          );
+          if (referenceImageUrl) {
+            referenceImageUrls = [referenceImageUrl];
+            console.log(
+              `[SceneCard] Scene ${sceneIndex}: Using reference image from composition box:`,
+              referenceImageUrl.substring(0, 80) + '...'
+            );
+          } else {
+            console.warn(
+              `[SceneCard] Scene ${sceneIndex}: Reference image ID "${scene.referenceImageId}" not found`
+            );
+          }
         }
+
+        // Priority 2: Fallback to project-level reference images if no scene-specific reference
+        if (referenceImageUrls.length === 0) {
+          referenceImageUrls = (project.referenceImageUrls || []).slice(0, SCENE_CONSTANTS.MAX_REFERENCE_IMAGES);
+          if (referenceImageUrls.length > 0) {
+            console.log(
+              `[SceneCard] Scene ${sceneIndex}: Using ${referenceImageUrls.length} project-level reference image(s)`
+            );
+          }
+        }
+      } else {
+        console.log(
+          `[SceneCard] Scene ${sceneIndex}: Seed frame mode enabled - NOT including reference images`
+        );
       }
 
       // Get seed frame from previous scene (for Scenes 1-4, to use as seed image for image-to-image generation)
@@ -235,17 +246,36 @@ export default function SceneCard({
         }
       } else if (mediaDrawer.seedImageId) {
         // Check if a seed image is selected in the media drawer (purple selection)
+        console.log(
+          `[SceneCard] Scene ${sceneIndex}: Attempting to use media drawer seed image ID:`,
+          mediaDrawer.seedImageId
+        );
+        console.log(
+          `[SceneCard] Scene ${sceneIndex}: Search context has ${project.uploadedImages?.length || 0} uploaded images`
+        );
+
         const foundSeedImageUrl = findImageUrlById(mediaDrawer.seedImageId, searchContext);
 
         if (foundSeedImageUrl) {
           seedImageUrl = foundSeedImageUrl;
           console.log(
-            `[SceneCard] Scene ${sceneIndex}: Using media drawer seed image for i2i:`,
+            `[SceneCard] Scene ${sceneIndex}: ✓ Using media drawer seed image for i2i:`,
             seedImageUrl.substring(0, 80) + '...'
           );
         } else {
           console.warn(
-            `[SceneCard] Scene ${sceneIndex}: Media drawer seed image ID "${mediaDrawer.seedImageId}" not found`
+            `[SceneCard] Scene ${sceneIndex}: ✗ Media drawer seed image ID "${mediaDrawer.seedImageId}" not found in search context`
+          );
+          console.warn(
+            `[SceneCard] Scene ${sceneIndex}: Available uploaded image IDs:`,
+            project.uploadedImages?.map(img => `${img.id} (${img.originalName})`)
+          );
+          console.warn(
+            `[SceneCard] Scene ${sceneIndex}: Available uploaded image IDs with processed versions:`,
+            project.uploadedImages?.flatMap(img => [
+              img.id,
+              ...(img.processedVersions?.map(p => p.id) || [])
+            ])
           );
         }
       } else if (sceneIndex > 0) {
@@ -416,13 +446,19 @@ export default function SceneCard({
         baseImageUrl.substring(0, 80) + '...'
       );
 
+      // Get reference images for video consistency
+      const referenceImageUrls = getReferenceImageUrls();
+
       const response = await generateVideo(
         baseImageUrl,
         scene.videoPrompt || scene.imagePrompt, // Fallback to imagePrompt for backward compatibility
         project.id,
         sceneIndex,
         seedFrameUrl,
-        scene.suggestedDuration // Pass scene duration to video generation
+        scene.suggestedDuration, // Pass scene duration to video generation
+        undefined, // subsceneIndex (not used in this workflow)
+        scene.modelParameters, // Pass model-specific parameters from scene
+        referenceImageUrls // Pass reference images for consistency
       );
 
       if (!response.predictionId) {
