@@ -11,14 +11,16 @@ import { getStorageService } from '@/lib/storage/storage-service';
 /**
  * GET /api/assets/cars
  * Fetch car assets database from Database (Postgres)
- * 
+ *
  * Returns a CarDatabase object with variants and customAssets.
- * Filters by the authenticated user's company.
+ * Filters by the authenticated user's company, unless:
+ * - User has ADMIN role (access to all assets)
+ * - User belongs to demo-company-id (test company with access to all assets)
  */
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
-    
+
     if (!session?.user?.companyId) {
       // If no session/company, return empty list (or could return 401)
       return NextResponse.json({
@@ -30,9 +32,15 @@ export async function GET(request: NextRequest) {
     const companyId = session.user.companyId;
     const storageService = getStorageService();
 
+    // Check if user should have access to all assets
+    const isAdmin = session.user.role === 'ADMIN';
+    const isTestCompany = companyId === 'demo-company-id';
+    const hasFullAccess = isAdmin || isTestCompany;
+
     // Fetch cars for this company with all relations
+    // Admin users and test company get all assets, others get only their company's assets
     const carModels = await prisma.carModel.findMany({
-      where: { companyId },
+      where: hasFullAccess ? {} : { companyId },
       include: {
         variants: {
           include: {

@@ -525,6 +525,7 @@ export default function AssetViewer({
                 src={currentImage.url}
                 alt={currentImage.alt}
                 className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+                loading="eager"
               />
             )}
           </div>
@@ -590,56 +591,64 @@ export default function AssetViewer({
             </div>
             
             <div className="flex-1 overflow-y-auto p-2 space-y-2 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
-              {images.map((image, index) => (
-                <div key={image.id} className="relative group w-full aspect-square flex-shrink-0">
-                  <button
-                    onClick={() => handleThumbnailClick(index)}
-                    className={`w-full h-full rounded-lg overflow-hidden border-2 transition-all ${
-                      index === currentImageIndex
-                        ? 'border-white shadow-lg'
-                        : 'border-white/20 hover:border-white/40'
-                    }`}
-                  >
-                    <img
-                      src={image.url}
-                      alt={image.alt}
-                      className="w-full h-full object-cover"
-                    />
-                  </button>
+              {images.map((image, index) => {
+                // Load first 10 images eagerly, then load on-demand as user scrolls
+                const isInInitialBatch = index < 10;
+                const isNearCurrent = Math.abs(index - currentImageIndex) <= 5;
+                const shouldLoad = isInInitialBatch || isNearCurrent;
 
-                  {/* Selection checkbox - inside the thumbnail */}
-                  {onAssetToggle && (
+                return (
+                  <div key={image.id} className="relative group w-full aspect-square flex-shrink-0">
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAssetToggle(image.id);
-                      }}
-                      className={`absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center shadow-md border transition-all z-10 ${
-                        selectedAssetIds.has(image.id)
-                          ? 'bg-green-500 border-green-400 text-white'
-                          : 'bg-black/70 border-white/50 text-white/60 hover:border-white/80'
+                      onClick={() => handleThumbnailClick(index)}
+                      className={`w-full h-full rounded-lg overflow-hidden border-2 transition-all ${
+                        index === currentImageIndex
+                          ? 'border-white shadow-lg'
+                          : 'border-white/20 hover:border-white/40'
                       }`}
-                      title={selectedAssetIds.has(image.id) ? 'Deselect asset' : 'Select asset'}
                     >
-                      {selectedAssetIds.has(image.id) && <Check className="w-3.5 h-3.5" />}
+                      <img
+                        src={image.url}
+                        alt={image.alt}
+                        className="w-full h-full object-cover"
+                        loading={shouldLoad ? 'eager' : 'lazy'}
+                      />
                     </button>
-                  )}
 
-                  {/* Remove button for custom assets */}
-                  {selectedCar && 'adjustments' in selectedCar && onRemoveImage && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemoveImage(selectedCar.id, image.id);
-                      }}
-                      className="absolute -top-2 -right-2 w-7 h-7 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg border-2 border-white/20 opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                      title="Remove image"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
+                    {/* Selection checkbox - inside the thumbnail */}
+                    {onAssetToggle && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAssetToggle(image.id);
+                        }}
+                        className={`absolute top-1 left-1 w-6 h-6 rounded flex items-center justify-center shadow-md border transition-all z-10 ${
+                          selectedAssetIds.has(image.id)
+                            ? 'bg-green-500 border-green-400 text-white'
+                            : 'bg-black/70 border-white/50 text-white/60 hover:border-white/80'
+                        }`}
+                        title={selectedAssetIds.has(image.id) ? 'Deselect asset' : 'Select asset'}
+                      >
+                        {selectedAssetIds.has(image.id) && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+
+                    {/* Remove button for custom assets */}
+                    {selectedCar && 'adjustments' in selectedCar && onRemoveImage && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveImage(selectedCar.id, image.id);
+                        }}
+                        className="absolute -top-2 -right-2 w-7 h-7 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center shadow-lg border-2 border-white/20 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                        title="Remove image"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

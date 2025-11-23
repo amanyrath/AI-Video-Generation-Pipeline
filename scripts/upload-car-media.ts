@@ -126,9 +126,9 @@ function validateArgs(args: ParsedArgs): void {
     process.exit(1);
   }
 
-  // Validate UUID format for companyId
+  // Validate UUID format for companyId (allow demo-company-id as special case)
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(args.companyId)) {
+  if (args.companyId !== 'demo-company-id' && !uuidRegex.test(args.companyId)) {
     console.error('Error: --company-id must be a valid UUID');
     process.exit(1);
   }

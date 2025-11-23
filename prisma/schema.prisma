@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,7 +7,357 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ==================== ENUMS ====================
+model Company {
+  id        String         @id @default(uuid())
+  name      String
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  carModels CarModel[]
+  assets    CompanyAsset[]
+  projects  Project[]
+  users     User[]
+}
+
+model User {
+  id         String      @id @default(uuid())
+  email      String      @unique
+  name       String
+  password   String
+  role       UserRole    @default(MEMBER)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  companyId  String
+  projects   Project[]   @relation("ProjectOwner")
+  shareLinks ShareLink[] @relation("ShareLinksCreated")
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([email])
+}
+
+model CompanyAsset {
+  id        String    @id @default(uuid())
+  type      AssetType
+  value     Json?
+  s3Key     String?
+  filename  String?
+  mimeType  String?
+  size      Int?
+  createdAt DateTime  @default(now())
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([type])
+}
+
+model CarModel {
+  id        String       @id @default(uuid())
+  name      String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  companyId String
+  company   Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  variants  CarVariant[]
+
+  @@index([companyId])
+}
+
+model CarVariant {
+  id        String     @id @default(uuid())
+  year      Int
+  trim      String
+  createdAt DateTime   @default(now())
+  modelId   String
+  media     CarMedia[]
+  model     CarModel   @relation(fields: [modelId], references: [id], onDelete: Cascade)
+
+  @@index([modelId])
+}
+
+model CarMedia {
+  id        String       @id @default(uuid())
+  type      CarMediaType
+  s3Key     String
+  filename  String
+  mimeType  String
+  size      Int
+  createdAt DateTime     @default(now())
+  variantId String
+  variant   CarVariant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([variantId])
+  @@index([type])
+}
+
+model Project {
+  id                   String          @id @default(uuid())
+  name                 String
+  prompt               String
+  targetDuration       Int
+  status               ProjectStatus   @default(STORYBOARD)
+  finalVideoUrl        String?
+  finalVideoS3Key      String?
+  characterDescription String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  companyId            String
+  ownerId              String
+  company              Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  owner                User            @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  scenes               Scene[]
+  shareLinks           ShareLink[]
+  textOverlays         TextOverlay[]
+  timelineClips        TimelineClip[]
+  uploadedImages       UploadedImage[]
+
+  @@index([companyId])
+  @@index([ownerId])
+  @@index([status])
+}
+
+model Scene {
+  id                String           @id @default(uuid())
+  sceneNumber       Float
+  sceneTitle        String
+  sceneSummary      String
+  imagePrompt       String
+  suggestedDuration Float
+  negativePrompt    String?
+  customDuration    Float?
+  customImageInput  String?
+  useSeedFrame      Boolean          @default(false)
+  status            SceneStatus      @default(PENDING)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  projectId         String
+  videoPrompt       String
+  modelParameters   Json?
+  isDuplicate       Boolean          @default(false)
+  parentSceneId     String?
+  generatedImages   GeneratedImage[]
+  generatedVideos   GeneratedVideo[]
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  seedFrames        SeedFrame[]
+  timelineClips     TimelineClip[]
+
+  @@unique([projectId, sceneNumber])
+  @@index([projectId])
+  @@index([status])
+}
+
+model GeneratedImage {
+  id          String   @id @default(uuid())
+  url         String
+  s3Key       String?
+  localPath   String?
+  prompt      String
+  replicateId String
+  isSelected  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  sceneId     String
+  scene       Scene    @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+
+  @@index([sceneId])
+  @@index([isSelected])
+}
+
+model GeneratedVideo {
+  id            String         @id @default(uuid())
+  url           String
+  s3Key         String?
+  localPath     String?
+  duration      Float?
+  prompt        String?
+  isSelected    Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  sceneId       String
+  scene         Scene          @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  timelineClips TimelineClip[]
+
+  @@index([sceneId])
+  @@index([isSelected])
+}
+
+model SeedFrame {
+  id         String   @id @default(uuid())
+  url        String
+  s3Key      String?
+  frameIndex Int
+  isSelected Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  sceneId    String
+  scene      Scene    @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+
+  @@index([sceneId])
+}
+
+model TimelineClip {
+  id        String         @id @default(uuid())
+  title     String
+  startTime Float
+  duration  Float
+  trimStart Float?
+  trimEnd   Float?
+  order     Int
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  projectId String
+  sceneId   String
+  videoId   String
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scene     Scene          @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  video     GeneratedVideo @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([sceneId])
+  @@index([order])
+}
+
+model TextOverlay {
+  id                String   @id @default(uuid())
+  text              String
+  startTime         Float
+  duration          Float
+  x                 Float    @default(0.5)
+  y                 Float    @default(0.85)
+  fontSize          Int      @default(48)
+  fontFamily        String   @default("Arial")
+  fontColor         String   @default("#FFFFFF")
+  backgroundColor   String?
+  backgroundOpacity Float    @default(0.0)
+  textAlign         String   @default("center")
+  fontWeight        String   @default("normal")
+  borderWidth       Int      @default(0)
+  borderColor       String?
+  opacity           Float    @default(1.0)
+  rotation          Float    @default(0.0)
+  shadowEnabled     Boolean  @default(false)
+  shadowOffsetX     Int      @default(2)
+  shadowOffsetY     Int      @default(2)
+  shadowBlur        Int      @default(4)
+  shadowColor       String   @default("#000000")
+  animationIn       String?
+  animationOut      String?
+  order             Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([order])
+}
+
+model UploadedImage {
+  id           String   @id @default(uuid())
+  url          String
+  s3Key        String?
+  originalName String
+  mimeType     String
+  size         Int
+  createdAt    DateTime @default(now())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model ShareLink {
+  id          String   @id @default(uuid())
+  shareToken  String   @unique
+  createdAt   DateTime @default(now())
+  projectId   String
+  createdById String
+  createdBy   User     @relation("ShareLinksCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([shareToken])
+  @@index([projectId])
+  @@index([createdById])
+}
+
+model FileStorage {
+  id                String                  @id @default(uuid())
+  s3Key             String                  @unique
+  localPath         String?
+  category          FileCategory
+  mimeType          String
+  size              Int
+  contentHash       String?
+  isUploaded        Boolean                 @default(false)
+  isDeleted         Boolean                 @default(false)
+  createdAt         DateTime                @default(now())
+  uploadedAt        DateTime?
+  deletedAt         DateTime?
+  projectId         String
+  sceneId           String?
+  processedVersions ProcessedImageVersion[] @relation("OriginalFile")
+
+  @@index([projectId])
+  @@index([sceneId])
+  @@index([category])
+  @@index([contentHash])
+  @@index([isUploaded])
+}
+
+model ProcessedImageVersion {
+  id             String         @id @default(uuid())
+  s3Key          String         @unique
+  localPath      String?
+  processingType ProcessingType
+  iteration      Int            @default(1)
+  mimeType       String         @default("image/png")
+  size           Int
+  isUploaded     Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  uploadedAt     DateTime?
+  originalFileId String
+  projectId      String
+  sceneId        String?
+  originalFile   FileStorage    @relation("OriginalFile", fields: [originalFileId], references: [id], onDelete: Cascade)
+
+  @@index([originalFileId])
+  @@index([projectId])
+  @@index([sceneId])
+  @@index([processingType])
+  @@index([iteration])
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
 
 enum UserRole {
   ADMIN
@@ -64,403 +411,4 @@ enum ProcessingType {
   EDGE_CLEANED
   UPSCALED
   RECOLORED
-}
-
-// ==================== CORE ENTITIES ====================
-
-model Company {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  users    User[]
-  assets   CompanyAsset[]
-  carModels CarModel[]
-  projects Project[]
-}
-
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String
-  password  String   // Hashed with bcrypt
-  role      UserRole @default(MEMBER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  companyId  String
-  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  projects   Project[]   @relation("ProjectOwner")
-  shareLinks ShareLink[] @relation("ShareLinksCreated")
-
-  @@index([companyId])
-  @@index([email])
-}
-
-model CompanyAsset {
-  id        String    @id @default(uuid())
-  type      AssetType
-  value     Json?     // For color schemes, settings, etc.
-  s3Key     String?   // S3 storage key for file assets
-  filename  String?   // Original filename
-  mimeType  String?
-  size      Int?      // File size in bytes
-  createdAt DateTime  @default(now())
-
-  // Relations
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@index([companyId])
-  @@index([type])
-}
-
-// ==================== CAR MODEL HIERARCHY ====================
-
-model CarModel {
-  id        String   @id @default(uuid())
-  name      String   // e.g., "Mustang", "Camaro"
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  companyId String
-  company   Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  variants  CarVariant[]
-
-  @@index([companyId])
-}
-
-model CarVariant {
-  id        String   @id @default(uuid())
-  year      Int      // Model year (e.g., 2024)
-  trim      String   // Trim level (e.g., "GT", "Base", "Premium")
-  createdAt DateTime @default(now())
-
-  // Relations
-  modelId String
-  model   CarModel   @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  media   CarMedia[]
-
-  @@index([modelId])
-}
-
-model CarMedia {
-  id        String       @id @default(uuid())
-  type      CarMediaType
-  s3Key     String
-  filename  String
-  mimeType  String
-  size      Int          // File size in bytes
-  createdAt DateTime     @default(now())
-
-  // Relations
-  variantId String
-  variant   CarVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-
-  @@index([variantId])
-  @@index([type])
-}
-
-// ==================== PROJECT ENTITIES ====================
-
-model Project {
-  id                   String        @id @default(uuid())
-  name                 String
-  prompt               String        @db.Text
-  targetDuration       Int           // 15, 30, or 60 seconds
-  status               ProjectStatus @default(STORYBOARD)
-  finalVideoUrl        String?
-  finalVideoS3Key      String?
-  characterDescription String?       @db.Text
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
-
-  // Relations
-  companyId      String
-  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  ownerId        String
-  owner          User            @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  scenes         Scene[]
-  timelineClips  TimelineClip[]
-  uploadedImages UploadedImage[]
-  shareLinks     ShareLink[]
-  textOverlays   TextOverlay[]
-
-  @@index([companyId])
-  @@index([ownerId])
-  @@index([status])
-}
-
-model Scene {
-  id               String      @id @default(uuid())
-  sceneNumber      Float       // Order index (1, 1.1, 2, 2.1, 3, etc.) - supports sub-numbering for duplicates
-  sceneTitle       String      // Title of the scene
-  sceneSummary     String      @db.Text // Summary/description
-  imagePrompt      String      @db.Text // Prompt for image generation
-  videoPrompt      String      @db.Text // Prompt for video generation
-  suggestedDuration Float      // Suggested duration in seconds
-  negativePrompt   String?     @db.Text
-  customDuration   Float?      // User-overridden duration
-  customImageInput String?     // Custom image URL
-  useSeedFrame     Boolean     @default(false)
-  modelParameters  Json?       // Model-specific parameters for video generation (e.g., aspect_ratio, resolution, seed, etc.)
-  status           SceneStatus @default(PENDING)
-  isDuplicate      Boolean     @default(false) // Whether this scene is a duplicate
-  parentSceneId    String?     // ID of the parent scene if this is a duplicate
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
-
-  // Relations
-  projectId       String
-  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  generatedImages GeneratedImage[]
-  generatedVideos GeneratedVideo[]
-  seedFrames      SeedFrame[]
-  timelineClips   TimelineClip[]
-
-  @@unique([projectId, sceneNumber])
-  @@index([projectId])
-  @@index([status])
-}
-
-model GeneratedImage {
-  id          String   @id @default(uuid())
-  url         String   // Public URL
-  s3Key       String?  // S3 storage key
-  localPath   String?  // Local file path (temporary)
-  prompt      String   @db.Text
-  replicateId String   // Replicate prediction ID
-  isSelected  Boolean  @default(false)
-  createdAt   DateTime @default(now())
-
-  // Relations
-  sceneId String
-  scene   Scene  @relation(fields: [sceneId], references: [id], onDelete: Cascade)
-
-  @@index([sceneId])
-  @@index([isSelected])
-}
-
-model GeneratedVideo {
-  id          String   @id @default(uuid())
-  url         String   // Public URL
-  s3Key       String?  // S3 storage key
-  localPath   String?  // Local file path (temporary)
-  duration    Float?   // Actual duration in seconds
-  prompt      String?  @db.Text
-  isSelected  Boolean  @default(false)
-  createdAt   DateTime @default(now())
-
-  // Relations
-  sceneId       String
-  scene         Scene          @relation(fields: [sceneId], references: [id], onDelete: Cascade)
-  timelineClips TimelineClip[]
-
-  @@index([sceneId])
-  @@index([isSelected])
-}
-
-model SeedFrame {
-  id         String   @id @default(uuid())
-  url        String   // Public URL
-  s3Key      String?  // S3 storage key
-  frameIndex Int      // Frame number extracted
-  isSelected Boolean  @default(false)
-  createdAt  DateTime @default(now())
-
-  // Relations
-  sceneId String
-  scene   Scene  @relation(fields: [sceneId], references: [id], onDelete: Cascade)
-
-  @@index([sceneId])
-}
-
-model TimelineClip {
-  id        String   @id @default(uuid())
-  title     String
-  startTime Float    // Start time in timeline
-  duration  Float    // Clip duration
-  trimStart Float?   // Trim start point in source video
-  trimEnd   Float?   // Trim end point in source video
-  order     Int      // Order in timeline
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  projectId String
-  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  sceneId   String
-  scene     Scene          @relation(fields: [sceneId], references: [id], onDelete: Cascade)
-  videoId   String
-  video     GeneratedVideo @relation(fields: [videoId], references: [id], onDelete: Cascade)
-
-  @@index([projectId])
-  @@index([sceneId])
-  @@index([order])
-}
-
-model TextOverlay {
-  id           String   @id @default(uuid())
-  text         String   @db.Text
-  startTime    Float    // Start time in timeline
-  duration     Float    // Duration to display overlay
-  x            Float    // X position (0-1, percentage of video width)
-  y            Float    // Y position (0-1, percentage of video height)
-  fontSize     Int      @default(48) // Font size in pixels
-  fontFamily   String   @default("Arial")
-  fontColor    String   @default("#FFFFFF") // Hex color code
-  backgroundColor String? // Optional background color
-  backgroundOpacity Float @default(0.0) // Background opacity (0-1)
-  textAlign    String   @default("center") // left, center, right
-  fontWeight   String   @default("normal") // normal, bold
-  borderWidth  Int      @default(0) // Border/outline width
-  borderColor  String?  // Border/outline color
-  opacity      Float    @default(1.0) // Text opacity (0-1)
-  rotation     Float    @default(0.0) // Rotation in degrees
-  shadowEnabled Boolean @default(false) // Enable drop shadow
-  shadowOffsetX Int     @default(2) // Shadow X offset
-  shadowOffsetY Int     @default(2) // Shadow Y offset
-  shadowBlur   Int      @default(4) // Shadow blur radius
-  shadowColor  String   @default("#000000") // Shadow color
-  animationIn  String?  // Entry animation: fade, slide-left, slide-right, slide-up, slide-down
-  animationOut String?  // Exit animation: fade, slide-left, slide-right, slide-up, slide-down
-  order        Int      // Z-index for layering
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  // Relations
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@index([projectId])
-  @@index([startTime])
-  @@index([order])
-}
-
-model UploadedImage {
-  id           String   @id @default(uuid())
-  url          String   // Public URL
-  s3Key        String?  // S3 storage key
-  originalName String
-  mimeType     String
-  size         Int      // File size in bytes
-  createdAt    DateTime @default(now())
-
-  // Relations
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  @@index([projectId])
-}
-
-model ShareLink {
-  id          String   @id @default(uuid())
-  shareToken  String   @unique
-  createdAt   DateTime @default(now())
-
-  // Relations
-  projectId   String
-  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdById String
-  createdBy   User    @relation("ShareLinksCreated", fields: [createdById], references: [id], onDelete: Cascade)
-
-  @@index([shareToken])
-  @@index([projectId])
-  @@index([createdById])
-}
-
-// ==================== FILE STORAGE ====================
-
-model FileStorage {
-  id           String        @id @default(uuid())
-  s3Key        String        @unique
-  localPath    String?       // Local file path (if still exists)
-  category     FileCategory
-  mimeType     String
-  size         Int           // File size in bytes
-  contentHash  String?       // MD5 hash for duplicate detection
-  isUploaded   Boolean       @default(false) // Whether uploaded to S3
-  isDeleted    Boolean       @default(false) // Soft delete flag
-  createdAt    DateTime      @default(now())
-  uploadedAt   DateTime?     // When uploaded to S3
-  deletedAt    DateTime?     // When deleted
-
-  // Relations
-  projectId    String
-  sceneId      String?
-
-  // Processed versions of this file
-  processedVersions ProcessedImageVersion[] @relation("OriginalFile")
-
-  @@index([projectId])
-  @@index([sceneId])
-  @@index([category])
-  @@index([contentHash])
-  @@index([isUploaded])
-}
-
-model ProcessedImageVersion {
-  id             String         @id @default(uuid())
-  s3Key          String         @unique
-  localPath      String?
-  processingType ProcessingType
-  iteration      Int            @default(1)
-  mimeType       String         @default("image/png")
-  size           Int
-  isUploaded     Boolean        @default(false)
-  createdAt      DateTime       @default(now())
-  uploadedAt     DateTime?
-
-  // Relations
-  originalFileId String
-  originalFile   FileStorage    @relation("OriginalFile", fields: [originalFileId], references: [id], onDelete: Cascade)
-  projectId      String
-  sceneId        String?
-
-  @@index([originalFileId])
-  @@index([projectId])
-  @@index([sceneId])
-  @@index([processingType])
-  @@index([iteration])
-}
-
-// ==================== NEXTAUTH REQUIRED TABLES ====================
-
-model Account {
-  id                String  @id @default(uuid())
-  userId            String
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
-
-  @@unique([provider, providerAccountId])
-  @@index([userId])
-}
-
-model Session {
-  id           String   @id @default(uuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-
-  @@index([userId])
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
 }
