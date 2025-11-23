@@ -74,9 +74,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (typeof sceneIndex !== 'number' || sceneIndex < 0 || sceneIndex > 4) {
+    if (typeof sceneIndex !== 'number' || sceneIndex < 0) {
       return NextResponse.json(
-        { success: false, error: 'sceneIndex is required and must be a number between 0 and 4' },
+        { success: false, error: 'sceneIndex is required and must be a number greater than or equal to 0' },
         { status: 400 }
       );
     }

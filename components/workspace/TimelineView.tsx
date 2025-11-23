@@ -121,6 +121,7 @@ export default function TimelineView() {
         const previewPath = await generatePreview(
           videoClips.map(clip => ({
             id: clip.id,
+            type: 'video' as const,
             videoLocalPath: clip.videoLocalPath!,
             trimStart: clip.trimStart,
             trimEnd: clip.trimEnd,
@@ -194,12 +195,8 @@ export default function TimelineView() {
   };
 
   // Check if all scenes have videos
-  const allScenesHaveVideos = scenes.every(s => {
-    if (s.selectedVideoId && s.generatedVideos) {
-      return s.generatedVideos.some(v => v.id === s.selectedVideoId);
-    }
-    return !!s.videoLocalPath;
-  });
+  // Use timeline clips as source of truth (already filtered for valid videos)
+  const allScenesHaveVideos = scenes.length > 0 && scenes.length === timelineClips.length;
 
   // Smooth playhead updates - use timeupdate as source of truth, interpolate smoothly
   const animationFrameRef = useRef<number | null>(null);

@@ -698,6 +698,7 @@ export async function applyClipEdits(
 export async function generatePreview(
   clips: Array<{
     id: string;
+    type: 'video' | 'image';
     videoLocalPath: string;
     trimStart?: number;
     trimEnd?: number;

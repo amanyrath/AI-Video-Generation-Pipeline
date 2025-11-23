@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, Suspense, useState } from 'react';
 import { useProjectStore, useProjectStore as projectStore } from '@/lib/state/project-store';
 import { useProjectAutoSave } from '@/lib/hooks/useProjectAutoSave';
+import { useAutoGenerate } from '@/lib/hooks/useAutoGenerate';
 import LeftPanel from '@/components/workspace/LeftPanel';
 import MiddlePanel from '@/components/workspace/MiddlePanel';
 import RightPanel from '@/components/workspace/RightPanel';
@@ -17,11 +18,13 @@ function WorkspaceContent() {
   useProjectAutoSave();
   const searchParams = useSearchParams();
   const projectId = searchParams.get('projectId');
+  const autoGenerate = searchParams.get('autoGenerate') === 'true';
   const { project, loadProject } = useProjectStore();
   // On mobile, panels start collapsed; on desktop, media drawer starts expanded, agent starts collapsed
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasTriggeredAutoGenerate, setHasTriggeredAutoGenerate] = useState(false);
   
   // Auto-collapse panels on mobile on mount
   useEffect(() => {
@@ -106,6 +109,21 @@ function WorkspaceContent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, projectId]); // loadProject is stable, don't need it in deps
+
+  // Auto-generation hook
+  useAutoGenerate({
+    enabled: autoGenerate && !hasTriggeredAutoGenerate && !!project && !!project.storyboard && project.storyboard.length > 0,
+    onComplete: () => {
+      console.log('[Workspace] Auto-generation complete!');
+      setHasTriggeredAutoGenerate(true);
+      alert('Auto-generation complete! All scenes have been generated.');
+    },
+    onError: (error) => {
+      console.error('[Workspace] Auto-generation error:', error);
+      setHasTriggeredAutoGenerate(true);
+      alert(`Auto-generation error: ${error.message}`);
+    },
+  });
 
   if (!project || isLoading) {
     return (

@@ -45,7 +45,7 @@ export interface FileMetadata {
 
 export interface StoredFile {
   id: string;
-  s3Key: string;
+  s3Key?: string; // Optional - only set if S3 upload succeeded
   localPath: string;
   url: string;
   size: number;
@@ -375,7 +375,10 @@ export class StorageService {
     await saveToLocal(buffer, localPath);
 
     // Upload to S3 if configured
-    let url = localPath;
+    // Default to local API URL for frontend access
+    let url = `/api/serve-image?path=${encodeURIComponent(localPath)}`;
+    let finalS3Key: string | undefined = undefined;
+
     if (this.config.useS3 && isS3Configured()) {
       try {
         await uploadToS3WithRetry(
@@ -390,6 +393,8 @@ export class StorageService {
             'content-hash': hash,
           }
         );
+        // Only set s3Key if upload succeeded
+        finalS3Key = s3Key;
         url = this.getS3Url(s3Key);
 
         // Optionally delete local file after S3 upload
@@ -402,14 +407,14 @@ export class StorageService {
           }
         }
       } catch (error) {
-        console.error('[StorageService] S3 upload failed, file remains local only:', error);
-        // Continue with local-only storage
+        console.error('[StorageService] S3 upload failed, using local URL instead:', error);
+        // finalS3Key remains undefined, url already set to local API URL
       }
     }
 
     return {
       id: fileId,
-      s3Key,
+      s3Key: finalS3Key, // Only set if S3 upload succeeded
       localPath,
       url,
       size: buffer.length,
@@ -498,8 +503,8 @@ export class StorageService {
     try {
       return await fs.readFile(file.localPath);
     } catch (e) {
-      // Fall back to S3
-      if (this.config.useS3 && isS3Configured()) {
+      // Fall back to S3 if key exists
+      if (this.config.useS3 && isS3Configured() && file.s3Key) {
         return await downloadFromS3(file.s3Key);
       }
       throw new Error(`File not found locally and S3 not available: ${file.localPath}`);

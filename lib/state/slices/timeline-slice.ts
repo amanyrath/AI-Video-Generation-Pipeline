@@ -109,6 +109,8 @@ export const createTimelineSlice: StateCreator<ProjectStore, [], [], TimelineSli
         if (video && video.localPath) {
           const duration = video.actualDuration || scene.suggestedDuration || 3;
 
+          // IMPORTANT: Only add clip if it has a valid videoLocalPath
+          // This prevents "Cannot process non-video clip" errors
           clips.push({
             id: uuidv4(),
             type: 'video',
@@ -125,6 +127,12 @@ export const createTimelineSlice: StateCreator<ProjectStore, [], [], TimelineSli
             endTime: currentTime + duration,
           });
           currentTime += duration;
+        } else {
+          console.warn(`[Timeline] Scene ${sceneIndex} skipped - no video available`, {
+            hasSelectedVideoId: !!scene.selectedVideoId,
+            hasGeneratedVideos: !!(scene.generatedVideos?.length),
+            hasVideoLocalPath: !!scene.videoLocalPath,
+          });
         }
       });
 

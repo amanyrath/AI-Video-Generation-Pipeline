@@ -335,9 +335,9 @@ export const AVAILABLE_VIDEO_MODELS: ModelOption[] = [
 
 export const IMAGE_CONFIG = {
   // Model identifier for Replicate
-  // Note: FLUX models on Replicate require the full version hash
-  // flux-schnell is the fastest and most reliable for testing
-  model: process.env.REPLICATE_IMAGE_MODEL || 'black-forest-labs/flux-schnell',
+  // Note: Nano Banana Pro is optimized for object consistency with reference images
+  // It uses image_input parameter to combine seed + reference images
+  model: process.env.REPLICATE_IMAGE_MODEL || 'google/nano-banana-pro',
   
   // Image generation parameters
   aspectRatio: '16:9' as const,

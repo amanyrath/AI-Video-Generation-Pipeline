@@ -160,6 +160,7 @@ async function callOpenRouterAPI(
   console.log(`[Storyboard] Using ${USE_OPENAI_DIRECT ? 'OpenAI Direct' : 'OpenRouter'} API`);
 
   const sceneCount = getSceneCountForDuration(targetDuration);
+  console.log(`[Storyboard] Target duration: ${targetDuration}s → Scene count: ${sceneCount}`);
   const userPrompt = `You are creating a performance-focused advertising storyboard (with strong support for product and automotive spots) for a ${targetDuration}-second video ad.
 
 Creative brief from the user:

@@ -95,10 +95,11 @@ export function useGenerationStatus(options: UseGenerationStatusOptions) {
             setSceneStatus(sceneIndex, sceneStatus);
 
             // Add chat message for status changes
+            const totalScenes = project.storyboard?.length || 5;
             const statusMessages: Record<string, string> = {
-              generating_image: `Generating image for Scene ${sceneIndex + 1}/5...`,
+              generating_image: `Generating image for Scene ${sceneIndex + 1}/${totalScenes}...`,
               image_ready: `✓ Image generated for Scene ${sceneIndex + 1}`,
-              generating_video: `Generating video for Scene ${sceneIndex + 1}/5...`,
+              generating_video: `Generating video for Scene ${sceneIndex + 1}/${totalScenes}...`,
               video_ready: `✓ Video generated for Scene ${sceneIndex + 1}`,
               completed: `✓ Scene ${sceneIndex + 1} completed`,
             };

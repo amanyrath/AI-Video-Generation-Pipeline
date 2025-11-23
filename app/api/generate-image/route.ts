@@ -150,8 +150,8 @@ function validateRequest(body: any): string | null {
     return 'Missing or invalid field: sceneIndex (must be a number)';
   }
 
-  if (body.sceneIndex < 0 || body.sceneIndex > 4) {
-    return 'sceneIndex must be between 0 and 4';
+  if (body.sceneIndex < 0) {
+    return 'sceneIndex must be 0 or greater';
   }
 
   if (body.seedImage !== undefined && typeof body.seedImage !== 'string') {
@@ -241,20 +241,16 @@ export async function POST(request: NextRequest) {
     const sceneIndex = body.sceneIndex;
 
     // Scene-based model selection
-    // Scene 0: Use Gen-4 Image for maximum consistency with reference image (matches video generation strategy)
-    // Scenes 1-4: Use runtime override or default I2I model
+    // When reference images are provided: Use Nano Banana Pro (default) for ALL scenes for maximum object consistency
+    // When no reference images: Use T2I model
     const hasReferenceImages = body.referenceImageUrls && body.referenceImageUrls.length > 0;
     let selectedModel = hasReferenceImages ? runtimeI2IModel : runtimeT2IModel;
-    
+
     if (!selectedModel) {
-      if (sceneIndex === 0 && hasReferenceImages) {
-        // Scene 0 with reference images: Use Gen-4 Image for maximum object consistency
-        selectedModel = 'runwayml/gen4-image';
-        console.log('[Image Generation API] Scene 0: Using Gen-4 Image for maximum consistency with reference image');
-      } else if (hasReferenceImages) {
-        // Scenes 1-4 with reference images: Use default I2I model (FLUX Dev)
-        selectedModel = null; // Will use default from config
-        console.log(`[Image Generation API] Scene ${sceneIndex}: Using default I2I model (FLUX Dev with IP-Adapter)`);
+      if (hasReferenceImages) {
+        // With reference images: Use Nano Banana Pro (default I2I model from config)
+        selectedModel = null; // Will use default from IMAGE_CONFIG (google/nano-banana-pro)
+        console.log(`[Image Generation API] Scene ${sceneIndex}: Using Nano Banana Pro (default) for object consistency with ${body.referenceImageUrls?.length || 0} reference image(s)`);
       } else {
         // No reference images: Use T2I model
         selectedModel = runtimeT2IModel;
