@@ -11,6 +11,7 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import { getStorageService, type StoredFile } from '@/lib/storage/storage-service';
+import type { TextOverlay } from '@/lib/types';
 
 const execAsync = promisify(exec);
 
@@ -511,20 +512,54 @@ async function stitchVideosWithTransitions(
   outputPath: string,
   transitions: TransitionConfig[],
   videoDurations: number[],
-  hasAudioStreams: boolean[]
+  hasAudioStreams: boolean[],
+  textOverlays?: TextOverlay[],
+  style?: 'whimsical' | 'luxury' | 'offroad' | null
 ): Promise<void> {
   try {
     // Calculate transition offsets
     const offsets = calculateTransitionOffsets(videoDurations, transitions);
 
     // Build filter complex
-    const { filterComplex, videoOutputLabel, audioOutputLabel } = buildTransitionFilter(
+    let { filterComplex, videoOutputLabel, audioOutputLabel } = buildTransitionFilter(
       videoPaths.length,
       videoDurations,
       transitions,
       offsets,
       hasAudioStreams
     );
+
+    // Add LUT filter if style is whimsical
+    if (style === 'whimsical') {
+      const lutPath = path.join(process.cwd(), 'public', 'luts', 'Asteroid_lut_pablolarah.cube');
+      // Check if LUT file exists
+      try {
+        await fs.access(lutPath);
+        const escapedLutPath = lutPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
+        const lutFilter = `[${videoOutputLabel}]lut3d='${escapedLutPath}'[vlut]`;
+        filterComplex += ';' + lutFilter;
+        videoOutputLabel = 'vlut';
+        console.log(`[VideoStitcher] Applied Whimsical LUT: ${lutPath}`);
+      } catch (error) {
+        console.warn(`[VideoStitcher] Warning: Whimsical LUT file not found at ${lutPath}, skipping LUT application`);
+      }
+    }
+
+    // Add text overlays if provided
+    if (textOverlays && textOverlays.length > 0) {
+      const { filterChain: textFilterChain, outputLabel: textOutputLabel } = buildTextOverlaysFilter(
+        textOverlays,
+        1920, // Standard video width
+        1080, // Standard video height
+        videoOutputLabel
+      );
+
+      if (textFilterChain) {
+        filterComplex += ';' + textFilterChain;
+        videoOutputLabel = textOutputLabel;
+        console.log(`[VideoStitcher] Added ${textOverlays.length} text overlays to filter complex`);
+      }
+    }
 
     // Build input arguments - escape paths properly
     const inputArgs = videoPaths
@@ -541,10 +576,10 @@ async function stitchVideosWithTransitions(
     // Use -async 1 to sync audio properly (only if we have audio)
     // Use -r 30 to ensure output is exactly 30fps
     // Map the final output labels from the filter chain
-    const mapArgs = audioOutputLabel 
+    const mapArgs = audioOutputLabel
       ? `-map "[${videoOutputLabel}]" -map "[${audioOutputLabel}]" -c:a aac -b:a 192k -async 1`
       : `-map "[${videoOutputLabel}]" -an`; // -an means no audio
-    
+
     const command = `ffmpeg ${inputArgs} -filter_complex "${filterComplex}" ${mapArgs} -c:v libx264 -preset medium -crf 23 -r 30 -fps_mode cfr -y "${outputPath}"`;
 
     console.log(`[VideoStitcher] Stitching ${videoPaths.length} videos with transitions...`);
@@ -557,24 +592,161 @@ async function stitchVideosWithTransitions(
 }
 
 // ============================================================================
+// Text Overlay Functions
+// ============================================================================
+
+/**
+ * Escape text for FFmpeg drawtext filter
+ * FFmpeg requires special escaping for certain characters
+ */
+function escapeTextForFFmpeg(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\\\\\')  // Backslash
+    .replace(/'/g, "'\\\\\\''")  // Single quote
+    .replace(/:/g, '\\:')         // Colon
+    .replace(/\[/g, '\\[')        // Opening bracket
+    .replace(/\]/g, '\\]')        // Closing bracket
+    .replace(/,/g, '\\,');        // Comma
+}
+
+/**
+ * Convert hex color to RGB for FFmpeg
+ */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 255, g: 255, b: 255 };
+}
+
+/**
+ * Build FFmpeg drawtext filter for a single text overlay
+ */
+function buildTextOverlayFilter(
+  overlay: TextOverlay,
+  videoWidth: number = 1920,
+  videoHeight: number = 1080,
+  inputLabel: string = 'vout',
+  outputLabel: string = 'vtext'
+): string {
+  const escapedText = escapeTextForFFmpeg(overlay.text);
+
+  // Calculate actual pixel positions from percentages
+  const xPos = Math.round(overlay.x * videoWidth);
+  const yPos = Math.round(overlay.y * videoHeight);
+
+  // Parse font color
+  const fontColor = hexToRgb(overlay.fontColor);
+  const fontColorStr = `0x${overlay.fontColor.replace('#', '')}`;
+
+  // Build base drawtext filter
+  let filter = `drawtext=text='${escapedText}'`;
+  filter += `:fontfile=/System/Library/Fonts/Supplemental/${overlay.fontFamily}.ttf`;
+  filter += `:fontsize=${overlay.fontSize}`;
+  filter += `:fontcolor=${fontColorStr}@${overlay.opacity}`;
+  filter += `:x=${xPos}`;
+  filter += `:y=${yPos}`;
+
+  // Add text alignment
+  if (overlay.textAlign === 'center') {
+    filter += `:x=${xPos}-(tw/2)`;
+  } else if (overlay.textAlign === 'right') {
+    filter += `:x=${xPos}-tw`;
+  }
+
+  // Add border/outline
+  if (overlay.borderWidth > 0 && overlay.borderColor) {
+    const borderColor = `0x${overlay.borderColor.replace('#', '')}`;
+    filter += `:borderw=${overlay.borderWidth}`;
+    filter += `:bordercolor=${borderColor}`;
+  }
+
+  // Add shadow
+  if (overlay.shadowEnabled) {
+    const shadowColor = hexToRgb(overlay.shadowColor);
+    filter += `:shadowcolor=${`0x${overlay.shadowColor.replace('#', '')}`}@0.8`;
+    filter += `:shadowx=${overlay.shadowOffsetX}`;
+    filter += `:shadowy=${overlay.shadowOffsetY}`;
+  }
+
+  // Add background box
+  if (overlay.backgroundColor && overlay.backgroundOpacity > 0) {
+    const bgColor = `0x${overlay.backgroundColor.replace('#', '')}`;
+    filter += `:box=1`;
+    filter += `:boxcolor=${bgColor}@${overlay.backgroundOpacity}`;
+    filter += `:boxborderw=10`;
+  }
+
+  // Add timing - enable only during overlay's time range
+  filter += `:enable='between(t,${overlay.startTime},${overlay.endTime})'`;
+
+  // Return complete filter with input/output labels
+  return `[${inputLabel}]${filter}[${outputLabel}]`;
+}
+
+/**
+ * Build complete text overlay filter chain for all overlays
+ */
+function buildTextOverlaysFilter(
+  textOverlays: TextOverlay[],
+  videoWidth: number = 1920,
+  videoHeight: number = 1080,
+  inputLabel: string = 'vout'
+): { filterChain: string; outputLabel: string } {
+  if (!textOverlays || textOverlays.length === 0) {
+    return { filterChain: '', outputLabel: inputLabel };
+  }
+
+  // Sort overlays by order (z-index)
+  const sortedOverlays = [...textOverlays].sort((a, b) => a.order - b.order);
+
+  const filters: string[] = [];
+  let currentLabel = inputLabel;
+
+  sortedOverlays.forEach((overlay, index) => {
+    const nextLabel = index === sortedOverlays.length - 1 ? 'vfinal' : `vtext${index}`;
+    const filter = buildTextOverlayFilter(
+      overlay,
+      videoWidth,
+      videoHeight,
+      currentLabel,
+      nextLabel
+    );
+    filters.push(filter);
+    currentLabel = nextLabel;
+  });
+
+  return {
+    filterChain: filters.join(';'),
+    outputLabel: currentLabel
+  };
+}
+
+// ============================================================================
 // Main Function
 // ============================================================================
 
 /**
  * Stitch multiple video clips into a single MP4 file with automatic smooth transitions
- * 
+ *
  * Automatically analyzes similarity between consecutive videos and applies appropriate
  * transitions (fade, crossfade, dissolve) based on visual similarity.
- * 
+ *
  * @param videoPaths - Array of paths to video files to stitch (in order)
  * @param projectId - Project ID for organizing output files
+ * @param textOverlays - Optional array of text overlays to render on the video
+ * @param style - Optional visual style for applying LUTs ('whimsical' | 'luxury' | 'offroad')
  * @returns Path to the stitched output video file
- * 
+ *
  * @throws Error if video files don't exist, are invalid, or stitching fails
  */
 export async function stitchVideos(
   videoPaths: string[],
-  projectId: string
+  projectId: string,
+  textOverlays?: TextOverlay[],
+  style?: 'whimsical' | 'luxury' | 'offroad' | null
 ): Promise<{ localPath: string; s3Url: string; s3Key: string; storedFile: StoredFile }> {
   // Validate input
   if (!videoPaths || videoPaths.length === 0) {
@@ -645,7 +817,9 @@ export async function stitchVideos(
         outputPath,
         transitions,
         videoDurations,
-        hasAudioStreams
+        hasAudioStreams,
+        textOverlays,
+        style
       );
     }
 

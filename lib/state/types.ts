@@ -1,4 +1,4 @@
-import { ProjectState, Scene, SceneWithState, GeneratedImage, GeneratedVideo, SeedFrame, AngleType, TimelineClip, AudioTrack, ImageTrack } from '@/lib/types';
+import { ProjectState, Scene, SceneWithState, GeneratedImage, GeneratedVideo, SeedFrame, AngleType, TimelineClip, AudioTrack, ImageTrack, TextOverlay } from '@/lib/types';
 import { ViewMode, MediaDrawerState, DragDropState, ChatMessage } from '@/lib/types/components';
 import { UploadedImage } from '@/lib/storage/image-storage';
 
@@ -149,6 +149,15 @@ export interface TimelineSlice {
   deleteImageTrack: (trackId: string) => void;
   updateImageTrack: (trackId: string, updates: Partial<ImageTrack>) => void;
   setSelectedImageTrackId: (trackId: string | null) => void;
+
+  // Text overlay management
+  textOverlays: TextOverlay[];
+  selectedTextOverlayId: string | null;
+  addTextOverlay: (text: string, startTime: number, duration?: number) => void;
+  deleteTextOverlay: (overlayId: string) => void;
+  updateTextOverlay: (overlayId: string, updates: Partial<TextOverlay>) => void;
+  setSelectedTextOverlayId: (overlayId: string | null) => void;
+  duplicateTextOverlay: (overlayId: string) => void;
 }
 
 export interface UISlice {

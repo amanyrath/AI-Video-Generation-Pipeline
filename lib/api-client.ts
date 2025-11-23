@@ -15,6 +15,32 @@ import { getRuntimeConfig } from '@/lib/config/model-runtime';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 /**
+ * Log API calls to the agent chat window
+ */
+function logAPICall(method: string, url: string, statusCode?: number) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const endpoint = url.replace(API_BASE_URL, '');
+    const status = statusCode ? ` (${statusCode})` : '';
+
+    // Dynamically import to avoid circular dependencies
+    import('@/lib/state/project-store').then(({ useProjectStore }) => {
+      const addChatMessage = useProjectStore.getState().addChatMessage;
+      addChatMessage({
+        role: 'agent',
+        type: 'status',
+        content: `${method} ${endpoint}${status}`,
+      });
+    }).catch((error) => {
+      console.warn('[API Logger] Failed to log API call:', error);
+    });
+  } catch (error) {
+    console.warn('[API Logger] Failed to log API call:', error);
+  }
+}
+
+/**
  * Gets runtime model configuration headers for API requests
  */
 function getRuntimeModelHeaders(): Record<string, string> {
@@ -84,15 +110,28 @@ function createAPIError(error: unknown, context?: Record<string, any>): APIError
  */
 async function retryRequest<T>(
   fn: () => Promise<T>,
-  config = DEFAULT_RETRY_CONFIG
+  config = DEFAULT_RETRY_CONFIG,
+  logInfo?: { method: string; url: string }
 ): Promise<T> {
   let lastError: APIError | null = null;
 
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
     try {
-      return await fn();
+      const result = await fn();
+
+      // Log successful API call on first attempt
+      if (attempt === 0 && logInfo) {
+        logAPICall(logInfo.method, logInfo.url, 200);
+      }
+
+      return result;
     } catch (error) {
       lastError = createAPIError(error, { attempt: attempt + 1, maxRetries: config.maxRetries });
+
+      // Log failed API call
+      if (logInfo && error instanceof Response) {
+        logAPICall(logInfo.method, logInfo.url, error.status);
+      }
 
       // Check if error is retryable
       if (error instanceof Response) {
@@ -129,8 +168,9 @@ export async function generateStoryboard(
   targetDuration: number = 15,
   referenceImageUrls?: string[]
 ): Promise<StoryboardResponse> {
+  const url = `${API_BASE_URL}/api/storyboard`;
   return retryRequest(async () => {
-    const response = await fetch(`${API_BASE_URL}/api/storyboard`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -149,7 +189,7 @@ export async function generateStoryboard(
     }
 
     return response.json();
-  });
+  }, DEFAULT_RETRY_CONFIG, { method: 'POST', url });
 }
 
 /**
@@ -211,8 +251,9 @@ export async function uploadImages(
     formData.append('edgeCleanupIterations', '1');
   }
 
+  const url = `${API_BASE_URL}/api/upload-images`;
   return retryRequest(async () => {
-    const response = await fetch(`${API_BASE_URL}/api/upload-images`, {
+    const response = await fetch(url, {
       method: 'POST',
       body: formData,
     });
@@ -251,7 +292,7 @@ export async function uploadImages(
       paths,
       images: result.images, // Include full image objects with processed versions
     };
-  });
+  }, DEFAULT_RETRY_CONFIG, { method: 'POST', url });
 }
 
 /**
@@ -261,19 +302,20 @@ export async function generateImage(
   request: ImageGenerationRequest,
   options?: { model?: string }
 ): Promise<ImageGenerationResponse> {
+  const url = `${API_BASE_URL}/api/generate-image`;
   return retryRequest(async () => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...getRuntimeModelHeaders(),
     };
-    
+
     // Override with specific model if provided
     if (options?.model) {
       headers['X-Model-I2I'] = options.model;
       headers['X-Model-T2I'] = options.model;
     }
-    
-    const response = await fetch(`${API_BASE_URL}/api/generate-image`, {
+
+    const response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(request),
@@ -285,7 +327,7 @@ export async function generateImage(
     }
 
     return response.json();
-  });
+  }, DEFAULT_RETRY_CONFIG, { method: 'POST', url });
 }
 
 /**
@@ -386,8 +428,9 @@ export async function generateVideo(
   subsceneIndex?: number, // Optional: For subscene-based workflow
   modelParameters?: Record<string, any> // Optional: Model-specific parameters
 ): Promise<{ predictionId: string; status: string }> {
+  const url = `${API_BASE_URL}/api/generate-video`;
   return retryRequest(async () => {
-    const response = await fetch(`${API_BASE_URL}/api/generate-video`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -411,7 +454,7 @@ export async function generateVideo(
     }
 
     const result = await response.json();
-    
+
     // Extract predictionId from the nested data structure
     if (result.success && result.data?.predictionId) {
       return {
@@ -419,9 +462,9 @@ export async function generateVideo(
         status: 'starting',
       };
     }
-    
+
     throw new Error('Invalid response format from video generation API');
-  });
+  }, DEFAULT_RETRY_CONFIG, { method: 'POST', url });
 }
 
 /**
@@ -553,7 +596,8 @@ export async function extractFrames(
  */
 export async function stitchVideos(
   videoPaths: string[],
-  projectId: string
+  projectId: string,
+  style?: 'whimsical' | 'luxury' | 'offroad' | null
 ): Promise<{ finalVideoPath: string; s3Url?: string }> {
   return retryRequest(async () => {
     const response = await fetch(`${API_BASE_URL}/api/stitch-videos`, {
@@ -564,6 +608,7 @@ export async function stitchVideos(
       body: JSON.stringify({
         videoPaths,
         projectId,
+        style,
       }),
     });
 
@@ -718,8 +763,9 @@ export async function uploadImageToS3(
  * Fetch user's projects
  */
 export async function fetchProjects(scope: 'mine' | 'company' = 'mine'): Promise<any[]> {
+  const url = `${API_BASE_URL}/api/projects?scope=${scope}`;
   return retryRequest(async () => {
-    const response = await fetch(`${API_BASE_URL}/api/projects?scope=${scope}`, {
+    const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
     });
@@ -730,7 +776,7 @@ export async function fetchProjects(scope: 'mine' | 'company' = 'mine'): Promise
 
     const data = await response.json();
     return data.projects || [];
-  });
+  }, DEFAULT_RETRY_CONFIG, { method: 'GET', url });
 }
 
 /**
@@ -742,8 +788,9 @@ export async function saveProject(
   targetDuration: number,
   characterDescription?: string
 ): Promise<any> {
+  const url = `${API_BASE_URL}/api/projects`;
   return retryRequest(async () => {
-    const response = await fetch(`${API_BASE_URL}/api/projects`, {
+    const response = await fetch(url, {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -764,7 +811,7 @@ export async function saveProject(
 
     const data = await response.json();
     return data.project;
-  });
+  }, DEFAULT_RETRY_CONFIG, { method: 'POST', url });
 }
 
 /**
@@ -948,6 +995,103 @@ export async function duplicateScene(
     }
 
     return response.json();
+  });
+}
+
+/**
+ * Get all text overlays for a project
+ */
+export async function getTextOverlays(
+  projectId: string
+): Promise<any[]> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/text-overlays`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to get text overlays' }));
+      throw new Error(error.error || 'Failed to get text overlays');
+    }
+
+    const data = await response.json();
+    return data.textOverlays || [];
+  });
+}
+
+/**
+ * Create a new text overlay
+ */
+export async function createTextOverlay(
+  projectId: string,
+  overlayData: any
+): Promise<any> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/text-overlays`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(overlayData),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to create text overlay' }));
+      throw new Error(error.error || 'Failed to create text overlay');
+    }
+
+    const data = await response.json();
+    return data.textOverlay;
+  });
+}
+
+/**
+ * Update a text overlay
+ */
+export async function updateTextOverlay(
+  projectId: string,
+  overlayId: string,
+  updates: any
+): Promise<any> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/text-overlays`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ overlayId, ...updates }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to update text overlay' }));
+      throw new Error(error.error || 'Failed to update text overlay');
+    }
+
+    const data = await response.json();
+    return data.textOverlay;
+  });
+}
+
+/**
+ * Delete a text overlay
+ */
+export async function deleteTextOverlay(
+  projectId: string,
+  overlayId: string
+): Promise<void> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/text-overlays?overlayId=${overlayId}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to delete text overlay' }));
+      throw new Error(error.error || 'Failed to delete text overlay');
+    }
   });
 }
 

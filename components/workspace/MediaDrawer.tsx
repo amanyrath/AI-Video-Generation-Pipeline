@@ -982,18 +982,6 @@ export default function MediaDrawer() {
         </div>
       </div>
 
-      {/* Selection Legend */}
-      <div className="px-3 pt-3 pb-3 border-b border-white/20 flex items-center gap-4 text-xs text-white/60">
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded border-2 border-violet-500 bg-violet-500/20 shadow-[0_0_8px_rgba(139,92,246,0.4)]" />
-          <span>Seed</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded border-2 border-yellow-400 bg-yellow-400/20" />
-          <span>Reference</span>
-        </div>
-      </div>
-
       {/* Media Sections */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {/* Character References */}

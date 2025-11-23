@@ -1,7 +1,7 @@
 import { StateCreator } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { ProjectStore, TimelineSlice } from '../types';
-import { TimelineClip, GeneratedVideo, AudioTrack, ImageTrack } from '@/lib/types';
+import { TimelineClip, GeneratedVideo, AudioTrack, ImageTrack, TextOverlay } from '@/lib/types';
 
 export const createTimelineSlice: StateCreator<ProjectStore, [], [], TimelineSlice> = (set, get) => ({
   timelineClips: [],
@@ -402,6 +402,87 @@ export const createTimelineSlice: StateCreator<ProjectStore, [], [], TimelineSli
 
   setSelectedImageTrackId: (trackId) => {
     set({ selectedImageTrackId: trackId });
+  },
+
+  // Text overlay management
+  textOverlays: [],
+  selectedTextOverlayId: null,
+
+  addTextOverlay: (text, startTime, duration = 3) => {
+    set((state) => {
+      const newOverlay: TextOverlay = {
+        id: uuidv4(),
+        text,
+        startTime,
+        duration,
+        x: 0.5, // Center horizontally
+        y: 0.85, // Bottom third
+        fontSize: 48,
+        fontFamily: 'Arial',
+        fontColor: '#FFFFFF',
+        fontWeight: 'normal',
+        textAlign: 'center',
+        opacity: 1.0,
+        rotation: 0.0,
+        backgroundOpacity: 0.0,
+        borderWidth: 0,
+        shadowEnabled: false,
+        shadowOffsetX: 2,
+        shadowOffsetY: 2,
+        shadowBlur: 4,
+        shadowColor: '#000000',
+        order: state.textOverlays.length,
+        endTime: startTime + duration,
+      };
+
+      return {
+        textOverlays: [...state.textOverlays, newOverlay],
+      };
+    });
+  },
+
+  deleteTextOverlay: (overlayId) => {
+    set((state) => ({
+      textOverlays: state.textOverlays.filter(o => o.id !== overlayId),
+      selectedTextOverlayId: state.selectedTextOverlayId === overlayId ? null : state.selectedTextOverlayId,
+    }));
+  },
+
+  updateTextOverlay: (overlayId, updates) => {
+    set((state) => ({
+      textOverlays: state.textOverlays.map(overlay => {
+        if (overlay.id === overlayId) {
+          const updatedOverlay = { ...overlay, ...updates };
+          // Recalculate endTime if startTime or duration changed
+          if (updates.startTime !== undefined || updates.duration !== undefined) {
+            updatedOverlay.endTime = updatedOverlay.startTime + updatedOverlay.duration;
+          }
+          return updatedOverlay;
+        }
+        return overlay;
+      }),
+    }));
+  },
+
+  setSelectedTextOverlayId: (overlayId) => {
+    set({ selectedTextOverlayId: overlayId });
+  },
+
+  duplicateTextOverlay: (overlayId) => {
+    set((state) => {
+      const overlay = state.textOverlays.find(o => o.id === overlayId);
+      if (!overlay) return state;
+
+      const newOverlay: TextOverlay = {
+        ...overlay,
+        id: uuidv4(),
+        order: state.textOverlays.length,
+      };
+
+      return {
+        textOverlays: [...state.textOverlays, newOverlay],
+      };
+    });
   },
 });
 

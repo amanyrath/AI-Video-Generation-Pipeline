@@ -91,9 +91,10 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  companyId String
-  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  projects  Project[] @relation("ProjectOwner")
+  companyId  String
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  projects   Project[]   @relation("ProjectOwner")
+  shareLinks ShareLink[] @relation("ShareLinksCreated")
 
   @@index([companyId])
   @@index([email])
@@ -186,6 +187,8 @@ model Project {
   scenes         Scene[]
   timelineClips  TimelineClip[]
   uploadedImages UploadedImage[]
+  shareLinks     ShareLink[]
+  textOverlays   TextOverlay[]
 
   @@index([companyId])
   @@index([ownerId])
@@ -300,6 +303,44 @@ model TimelineClip {
   @@index([order])
 }
 
+model TextOverlay {
+  id           String   @id @default(uuid())
+  text         String   @db.Text
+  startTime    Float    // Start time in timeline
+  duration     Float    // Duration to display overlay
+  x            Float    // X position (0-1, percentage of video width)
+  y            Float    // Y position (0-1, percentage of video height)
+  fontSize     Int      @default(48) // Font size in pixels
+  fontFamily   String   @default("Arial")
+  fontColor    String   @default("#FFFFFF") // Hex color code
+  backgroundColor String? // Optional background color
+  backgroundOpacity Float @default(0.0) // Background opacity (0-1)
+  textAlign    String   @default("center") // left, center, right
+  fontWeight   String   @default("normal") // normal, bold
+  borderWidth  Int      @default(0) // Border/outline width
+  borderColor  String?  // Border/outline color
+  opacity      Float    @default(1.0) // Text opacity (0-1)
+  rotation     Float    @default(0.0) // Rotation in degrees
+  shadowEnabled Boolean @default(false) // Enable drop shadow
+  shadowOffsetX Int     @default(2) // Shadow X offset
+  shadowOffsetY Int     @default(2) // Shadow Y offset
+  shadowBlur   Int      @default(4) // Shadow blur radius
+  shadowColor  String   @default("#000000") // Shadow color
+  animationIn  String?  // Entry animation: fade, slide-left, slide-right, slide-up, slide-down
+  animationOut String?  // Exit animation: fade, slide-left, slide-right, slide-up, slide-down
+  order        Int      // Z-index for layering
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([startTime])
+  @@index([order])
+}
+
 model UploadedImage {
   id           String   @id @default(uuid())
   url          String   // Public URL
@@ -314,6 +355,22 @@ model UploadedImage {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
+}
+
+model ShareLink {
+  id          String   @id @default(uuid())
+  shareToken  String   @unique
+  createdAt   DateTime @default(now())
+
+  // Relations
+  projectId   String
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User    @relation("ShareLinksCreated", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([shareToken])
+  @@index([projectId])
+  @@index([createdById])
 }
 
 // ==================== FILE STORAGE ====================

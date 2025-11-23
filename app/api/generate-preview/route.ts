@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { stitchVideos } from '@/lib/video/stitcher';
 import { applyClipEdits, clearClipEditCache } from '@/lib/video/editor';
-import { TimelineClip } from '@/lib/types';
+import { TimelineClip, TextOverlay } from '@/lib/types';
 import path from 'path';
 import fs from 'fs/promises';
 
@@ -9,7 +9,7 @@ import fs from 'fs/promises';
  * POST /api/generate-preview
  * Generates a preview video by stitching timeline clips with edits applied.
  * This creates a temporary preview video for smooth playback in the timeline.
- * 
+ *
  * Request Body:
  * {
  *   clips: Array<{
@@ -20,8 +20,9 @@ import fs from 'fs/promises';
  *     sourceDuration: number;
  *   }>;
  *   projectId: string;
+ *   textOverlays?: Array<TextOverlay>;
  * }
- * 
+ *
  * Response:
  * {
  *   success: boolean;
@@ -34,7 +35,7 @@ import fs from 'fs/promises';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { clips, projectId } = body;
+    const { clips, projectId, textOverlays } = body;
 
     if (!Array.isArray(clips) || clips.length === 0) {
       return NextResponse.json(
@@ -106,12 +107,83 @@ export async function POST(request: NextRequest) {
     // OPTIMIZED: Fast preview generation without motion interpolation
     // Uses lower resolution (720p) and ultrafast preset for quick preview
     // Motion interpolation is too CPU-intensive for preview - save it for final render
-    const filterComplex = `[0:v]setpts=PTS-STARTPTS,fps=30,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[v]`;
+    let filterComplex = `[0:v]setpts=PTS-STARTPTS,fps=30,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[v]`;
+    let finalOutputLabel = 'v';
+
+    // Add text overlays if provided
+    if (textOverlays && Array.isArray(textOverlays) && textOverlays.length > 0) {
+      const textFilters: string[] = [];
+      let currentLabel = 'v';
+
+      textOverlays.forEach((overlay: TextOverlay, index: number) => {
+        const nextLabel = index === textOverlays.length - 1 ? 'vfinal' : `vtext${index}`;
+        const escapedText = overlay.text
+          .replace(/\\/g, '\\\\\\\\')
+          .replace(/'/g, "'\\\\\\''")
+          .replace(/:/g, '\\:')
+          .replace(/\[/g, '\\[')
+          .replace(/\]/g, '\\]')
+          .replace(/,/g, '\\,');
+
+        // Scale positions for 720p preview (from 1920x1080)
+        const xPos = Math.round(overlay.x * 1280);
+        const yPos = Math.round(overlay.y * 720);
+        const fontSize = Math.round(overlay.fontSize * 0.67); // Scale font size for 720p
+
+        let textFilter = `[${currentLabel}]drawtext=text='${escapedText}'`;
+        textFilter += `:fontfile=/System/Library/Fonts/Supplemental/${overlay.fontFamily}.ttf`;
+        textFilter += `:fontsize=${fontSize}`;
+        textFilter += `:fontcolor=0x${overlay.fontColor.replace('#', '')}@${overlay.opacity}`;
+
+        // Position with alignment
+        if (overlay.textAlign === 'center') {
+          textFilter += `:x=${xPos}-(tw/2)`;
+        } else if (overlay.textAlign === 'right') {
+          textFilter += `:x=${xPos}-tw`;
+        } else {
+          textFilter += `:x=${xPos}`;
+        }
+        textFilter += `:y=${yPos}`;
+
+        // Add border/outline
+        if (overlay.borderWidth > 0 && overlay.borderColor) {
+          textFilter += `:borderw=${overlay.borderWidth}`;
+          textFilter += `:bordercolor=0x${overlay.borderColor.replace('#', '')}`;
+        }
+
+        // Add shadow
+        if (overlay.shadowEnabled) {
+          textFilter += `:shadowcolor=0x${overlay.shadowColor.replace('#', '')}@0.8`;
+          textFilter += `:shadowx=${overlay.shadowOffsetX}`;
+          textFilter += `:shadowy=${overlay.shadowOffsetY}`;
+        }
+
+        // Add background box
+        if (overlay.backgroundColor && overlay.backgroundOpacity > 0) {
+          textFilter += `:box=1`;
+          textFilter += `:boxcolor=0x${overlay.backgroundColor.replace('#', '')}@${overlay.backgroundOpacity}`;
+          textFilter += `:boxborderw=10`;
+        }
+
+        // Add timing
+        textFilter += `:enable='between(t,${overlay.startTime},${overlay.endTime})'`;
+        textFilter += `[${nextLabel}]`;
+
+        textFilters.push(textFilter);
+        currentLabel = nextLabel;
+      });
+
+      if (textFilters.length > 0) {
+        filterComplex += ';' + textFilters.join(';');
+        finalOutputLabel = currentLabel;
+        console.log(`[Preview] Added ${textOverlays.length} text overlays`);
+      }
+    }
 
     // Use ultrafast preset and higher CRF for quick preview generation
-    const commandWithAudio = `ffmpeg -f concat -safe 0 -i "${concatFilePath}" -filter_complex "${filterComplex}" -map "[v]" -c:v libx264 -preset ultrafast -crf 28 -r 30 -fps_mode cfr -c:a aac -b:a 96k -async 1 -y "${previewPath}"`;
+    const commandWithAudio = `ffmpeg -f concat -safe 0 -i "${concatFilePath}" -filter_complex "${filterComplex}" -map "[${finalOutputLabel}]" -c:v libx264 -preset ultrafast -crf 28 -r 30 -fps_mode cfr -c:a aac -b:a 96k -async 1 -y "${previewPath}"`;
 
-    const commandNoAudio = `ffmpeg -f concat -safe 0 -i "${concatFilePath}" -filter_complex "${filterComplex}" -map "[v]" -c:v libx264 -preset ultrafast -crf 28 -r 30 -fps_mode cfr -an -y "${previewPath}"`;
+    const commandNoAudio = `ffmpeg -f concat -safe 0 -i "${concatFilePath}" -filter_complex "${filterComplex}" -map "[${finalOutputLabel}]" -c:v libx264 -preset ultrafast -crf 28 -r 30 -fps_mode cfr -an -y "${previewPath}"`;
 
     console.log(`[Preview] Generating fast preview (720p, ultrafast preset)...`);
     console.log(`[Preview] Processing ${clips.length} clips`);

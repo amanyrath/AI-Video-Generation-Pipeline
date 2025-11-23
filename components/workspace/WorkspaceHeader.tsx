@@ -2,17 +2,21 @@
 
 import { useProjectStore } from '@/lib/state/project-store';
 import Link from 'next/link';
-import { Home, Settings, MessageSquare } from 'lucide-react';
+import { Home, Settings, MessageSquare, Share2 } from 'lucide-react';
 import { useState } from 'react';
 import DevPanel from './DevPanel';
 import SystemPromptsPanel from './SystemPromptsPanel';
 import UserMenu from '@/components/UserMenu';
 import ProjectSelector from './ProjectSelector';
+import ShareModal from './ShareModal';
 
 export default function WorkspaceHeader() {
   const { project } = useProjectStore();
   const [isDevPanelOpen, setIsDevPanelOpen] = useState(false);
   const [isSystemPromptsOpen, setIsSystemPromptsOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+
+  const hasFinalVideo = project?.finalVideoUrl || project?.finalVideoS3Key;
 
   return (
     <>
@@ -64,6 +68,18 @@ export default function WorkspaceHeader() {
           {/* User Menu */}
           <UserMenu />
 
+          {/* Share Button - only show if project has final video */}
+          {hasFinalVideo && (
+            <button
+              onClick={() => setIsShareModalOpen(true)}
+              className="p-2 hover:bg-white/10 rounded-lg transition-colors flex items-center justify-center"
+              title="Share Project"
+              aria-label="Share project"
+            >
+              <Share2 className="w-5 h-5 text-white/60 hover:text-white" />
+            </button>
+          )}
+
           {/* System Prompts Button */}
           <button
             onClick={() => setIsSystemPromptsOpen(!isSystemPromptsOpen)}
@@ -91,6 +107,15 @@ export default function WorkspaceHeader() {
 
       {/* System Prompts Panel */}
       <SystemPromptsPanel isOpen={isSystemPromptsOpen} onClose={() => setIsSystemPromptsOpen(false)} />
+
+      {/* Share Modal */}
+      {project && (
+        <ShareModal
+          isOpen={isShareModalOpen}
+          onClose={() => setIsShareModalOpen(false)}
+          projectId={project.id}
+        />
+      )}
     </>
   );
 }

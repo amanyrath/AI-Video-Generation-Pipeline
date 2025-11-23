@@ -20,6 +20,8 @@ export default withAuth(
           '/api/auth',
           '/api/health',
           '/api/assets/cars',
+          '/share',
+          '/api/share',
         ];
 
         // Check if the current path starts with any public route

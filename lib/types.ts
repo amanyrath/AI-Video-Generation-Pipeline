@@ -292,6 +292,73 @@ export interface ImageTrack {
 }
 
 // ============================================================================
+// Text Overlay Types
+// ============================================================================
+
+/**
+ * Animation types for text overlays
+ */
+export type TextOverlayAnimation = 'fade' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down';
+
+/**
+ * Text alignment options
+ */
+export type TextAlign = 'left' | 'center' | 'right';
+
+/**
+ * Font weight options
+ */
+export type FontWeight = 'normal' | 'bold';
+
+/**
+ * Represents a text overlay on the timeline
+ */
+export interface TextOverlay {
+  id: string;                       // UUID v4
+  text: string;                     // Text content
+  startTime: number;                // Start time in timeline (seconds)
+  duration: number;                 // Duration to display overlay (seconds)
+
+  // Position (0-1, percentage of video dimensions)
+  x: number;                        // X position (0 = left, 1 = right)
+  y: number;                        // Y position (0 = top, 1 = bottom)
+
+  // Text styling
+  fontSize: number;                 // Font size in pixels (default: 48)
+  fontFamily: string;               // Font family (default: "Arial")
+  fontColor: string;                // Hex color code (default: "#FFFFFF")
+  fontWeight: FontWeight;           // Font weight (default: "normal")
+  textAlign: TextAlign;             // Text alignment (default: "center")
+  opacity: number;                  // Text opacity 0-1 (default: 1.0)
+  rotation: number;                 // Rotation in degrees (default: 0.0)
+
+  // Background styling
+  backgroundColor?: string;         // Optional background color (hex)
+  backgroundOpacity: number;        // Background opacity 0-1 (default: 0.0)
+
+  // Border/outline styling
+  borderWidth: number;              // Border/outline width (default: 0)
+  borderColor?: string;             // Border/outline color (hex)
+
+  // Shadow styling
+  shadowEnabled: boolean;           // Enable drop shadow (default: false)
+  shadowOffsetX: number;            // Shadow X offset in pixels (default: 2)
+  shadowOffsetY: number;            // Shadow Y offset in pixels (default: 2)
+  shadowBlur: number;               // Shadow blur radius in pixels (default: 4)
+  shadowColor: string;              // Shadow color (hex, default: "#000000")
+
+  // Animations
+  animationIn?: TextOverlayAnimation;  // Entry animation
+  animationOut?: TextOverlayAnimation; // Exit animation
+
+  // Layering
+  order: number;                    // Z-index for layering
+
+  // Computed properties
+  endTime: number;                  // End time in timeline (startTime + duration)
+}
+
+// ============================================================================
 // Error Types
 // ============================================================================
 

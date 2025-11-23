@@ -438,7 +438,7 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
 
     if (videoPaths.length === 0) throw new Error('No videos available');
 
-    const response = await stitchVideos(videoPaths, state.project.id);
+    const response = await stitchVideos(videoPaths, state.project.id, state.selectedStyle);
     if (response.finalVideoPath) {
       const finalVideoUrl = response.finalVideoPath.startsWith('http')
         ? response.finalVideoPath
