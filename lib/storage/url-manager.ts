@@ -5,8 +5,6 @@
  * handling both S3 URLs and local serving endpoints.
  */
 
-import { getStorageService } from './storage-service';
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -73,10 +71,10 @@ export function getApiUrl(localPath: string, type: 'image' | 'video' = 'image'):
 
 /**
  * Get pre-signed URL for temporary access
+ * Note: This function is server-side only. Import from storage-service.ts instead.
  */
 export async function getPreSignedUrl(s3Key: string, expiresIn: number = 3600): Promise<string> {
-  const storageService = getStorageService();
-  return storageService.getPreSignedUrl(s3Key, expiresIn);
+  throw new Error('getPreSignedUrl is server-side only. Import getStorageService from storage-service.ts instead.');
 }
 
 // ============================================================================
@@ -264,7 +262,6 @@ export default {
   getPublicUrl,
   getS3Url,
   getApiUrl,
-  getPreSignedUrl,
   isPublicUrl,
   isS3Url,
   isLocalPath,

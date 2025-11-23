@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import prisma from '@/lib/db/prisma';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { authOptions } from '@/lib/auth/auth-options';
 
 /**
  * GET /api/projects/[id]/text-overlays
