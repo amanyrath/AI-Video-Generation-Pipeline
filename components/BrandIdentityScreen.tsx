@@ -298,7 +298,7 @@ export default function BrandIdentityScreen() {
     }
   };
 
-  const handleAutoGenerate = async () => {
+  const handleAutoGenerate = () => {
     // Build list of selected images to save
     const selectedImages = selectedCar && selectedAssetIds.size > 0
       ? selectedCar.referenceImages
@@ -314,16 +314,13 @@ export default function BrandIdentityScreen() {
           }))
       : [];
 
-    // Save assets to project store
     if (selectedImages.length > 0) {
       const { setUploadedImages } = useProjectStore.getState();
       setUploadedImages(selectedImages);
       console.log('[BrandIdentity] Saved', selectedImages.length, 'selected images for auto-generation');
     }
 
-    // Navigate to workspace immediately - don't wait for storyboard
-    // The workspace will show loading indicators while generation happens
-    console.log('[BrandIdentity] Navigating to workspace for auto-generation');
+    // Navigate to workspace with autoGenerate flag
     router.push('/workspace?autoGenerate=true');
   };
 
@@ -621,8 +618,6 @@ export default function BrandIdentityScreen() {
           <ArrowLeft className="w-4 h-4" />
           <span>Back</span>
         </button>
-
-        {/* Auto-Generate Button */}
         <button
           onClick={handleAutoGenerate}
           disabled={isWaitingForProject || selectedAssetIds.size === 0}
@@ -638,7 +633,6 @@ export default function BrandIdentityScreen() {
             Auto-generate entire video
           </span>
         </button>
-
         <button
           onClick={handleContinue}
           disabled={isWaitingForProject || selectedAssetIds.size === 0}

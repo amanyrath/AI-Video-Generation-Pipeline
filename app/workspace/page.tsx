@@ -20,12 +20,6 @@ function WorkspaceContent() {
   const projectId = searchParams.get('projectId');
   const autoGenerate = searchParams.get('autoGenerate') === 'true';
   const { project, loadProject } = useProjectStore();
-
-  console.log('[Workspace] URL params:', {
-    projectId,
-    autoGenerate,
-    hasProject: !!project,
-  });
   // On mobile, panels start collapsed; on desktop, media drawer starts expanded, agent starts collapsed
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
@@ -116,13 +110,13 @@ function WorkspaceContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, projectId]); // loadProject is stable, don't need it in deps
 
-  // Auto-generate all scenes if autoGenerate flag is set
+  // Auto-generation hook
   useAutoGenerate({
-    enabled: autoGenerate && !hasTriggeredAutoGenerate && !!project,
+    enabled: autoGenerate && !hasTriggeredAutoGenerate && !!project && !!project.storyboard && project.storyboard.length > 0,
     onComplete: () => {
       console.log('[Workspace] Auto-generation complete!');
       setHasTriggeredAutoGenerate(true);
-      alert('Auto-generation complete! Check the scenes.');
+      alert('Auto-generation complete! All scenes have been generated.');
     },
     onError: (error) => {
       console.error('[Workspace] Auto-generation error:', error);
@@ -130,19 +124,6 @@ function WorkspaceContent() {
       alert(`Auto-generation error: ${error.message}`);
     },
   });
-
-  // Log when auto-generate is enabled
-  useEffect(() => {
-    if (autoGenerate && project) {
-      console.log('[Workspace] Auto-generate enabled!', {
-        autoGenerate,
-        hasTriggeredAutoGenerate,
-        projectId: project.id,
-        storyboardLength: project.storyboard?.length,
-        uploadedImagesLength: project.uploadedImages?.length,
-      });
-    }
-  }, [autoGenerate, project, hasTriggeredAutoGenerate]);
 
   if (!project || isLoading) {
     return (

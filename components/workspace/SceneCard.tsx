@@ -1,9 +1,9 @@
 'use client';
 
 import { Scene } from '@/lib/types';
-import { CheckCircle2, Loader2, AlertCircle, Image as ImageIcon, Video, Copy } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertCircle, Image as ImageIcon, Video, Copy, Sparkles } from 'lucide-react';
 import { useProjectStore } from '@/lib/state/project-store';
-import { generateImage, pollImageStatus, generateVideo, pollVideoStatus } from '@/lib/api-client';
+import { generateImage, pollImageStatus, generateVideo, pollVideoStatus, enhancePrompt } from '@/lib/api-client';
 import { ImageGenerationRequest } from '@/lib/types';
 import { useState, useEffect, useRef } from 'react';
 import {
@@ -46,8 +46,10 @@ export default function SceneCard({
     retrySceneGeneration,
     clearSceneError,
     duplicateScene,
+    updateSceneVideoPrompt,
   } = useProjectStore();
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isEnhancing, setIsEnhancing] = useState(false);
   const sceneError = sceneErrors[sceneIndex];
   const [isVisible, setIsVisible] = useState(
     sceneIndex < SCENE_CONSTANTS.INITIAL_VISIBLE_CARDS
@@ -325,6 +327,16 @@ export default function SceneCard({
       const runtimeConfig = getRuntimeConfig();
       const promptAdjustmentMode = runtimeConfig.promptAdjustmentMode || 'scene-specific';
 
+      // Helper to check if error is retryable (Replicate transient errors)
+      const isRetryableError = (error: Error): boolean => {
+        const msg = error.message.toLowerCase();
+        return msg.includes('director') ||
+               msg.includes('e6716') ||
+               msg.includes('unexpected error') ||
+               msg.includes('temporary server') ||
+               msg.includes('internal server error');
+      };
+
       // Generate 1 image (storyboard page generates 1, editor page generates 5)
       const request: ImageGenerationRequest = {
         prompt: scene.imagePrompt,
@@ -337,33 +349,73 @@ export default function SceneCard({
         promptAdjustmentMode, // Prompt adjustment mode from runtime config
       };
 
-      const response = await generateImage(request);
-      
-      if (!response.success || !response.predictionId) {
-        throw new Error(response.error || 'Failed to start image generation');
-      }
+      const MAX_RETRIES = 2;
+      let lastError: Error | null = null;
 
-      const status = await pollImageStatus(response.predictionId, {
-        interval: SCENE_CONSTANTS.IMAGE_POLL_INTERVAL,
-        timeout: SCENE_CONSTANTS.IMAGE_GENERATION_TIMEOUT,
-        projectId: project.id,
-        sceneIndex,
-        prompt: scene.imagePrompt,
-      });
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            console.log(`[SceneCard] Retrying image generation for Scene ${sceneIndex + 1} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+            addChatMessage({
+              role: 'agent',
+              content: `Retrying image generation for Scene ${sceneIndex + 1}...`,
+              type: 'status',
+            });
+            // Brief delay before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
 
-      if (status.success && status.image) {
-        addGeneratedImage(sceneIndex, status.image);
-        if (!scenes[sceneIndex]?.selectedImageId) {
-          selectImage(sceneIndex, status.image.id);
+          const response = await generateImage(request);
+
+          if (!response.success || !response.predictionId) {
+            throw new Error(response.error || 'Failed to start image generation');
+          }
+
+          const status = await pollImageStatus(response.predictionId, {
+            interval: SCENE_CONSTANTS.IMAGE_POLL_INTERVAL,
+            timeout: SCENE_CONSTANTS.IMAGE_GENERATION_TIMEOUT,
+            projectId: project.id,
+            sceneIndex,
+            prompt: scene.imagePrompt,
+          });
+
+          if (status.success && status.image) {
+            addGeneratedImage(sceneIndex, status.image);
+            if (!scenes[sceneIndex]?.selectedImageId) {
+              selectImage(sceneIndex, status.image.id);
+            }
+            addChatMessage({
+              role: 'agent',
+              content: `✓ Image generated for Scene ${sceneIndex + 1}`,
+              type: 'status',
+            });
+            // Success - exit retry loop
+            return;
+          } else {
+            throw new Error(status.error || 'Image generation failed');
+          }
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+
+          // Check if we should retry
+          if (attempt < MAX_RETRIES && isRetryableError(lastError)) {
+            console.warn(`[SceneCard] Retryable error for Scene ${sceneIndex + 1}: ${lastError.message}`);
+            continue; // Try again
+          }
+
+          // No more retries or non-retryable error - break out to error handling
+          break;
         }
-        addChatMessage({
-          role: 'agent',
-          content: `✓ Image generated for Scene ${sceneIndex + 1}`,
-          type: 'status',
-        });
-      } else {
-        throw new Error(status.error || 'Image generation failed');
       }
+
+      // If we get here, all retries failed
+      const errorMessage = lastError?.message || 'Failed to generate image';
+      setSceneStatus(sceneIndex, 'pending');
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Error: ${errorMessage}`,
+        type: 'error',
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate image';
       setSceneStatus(sceneIndex, 'pending');
@@ -493,6 +545,58 @@ export default function SceneCard({
     }
   };
 
+  const handleEnhancePrompt = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!project || isEnhancing) return;
+
+    const currentPrompt = scene.videoPrompt || scene.imagePrompt;
+    if (!currentPrompt) {
+      addChatMessage({
+        role: 'agent',
+        content: `No video prompt to enhance for Scene ${sceneIndex + 1}`,
+        type: 'error',
+      });
+      return;
+    }
+
+    setIsEnhancing(true);
+    try {
+      addChatMessage({
+        role: 'agent',
+        content: `Enhancing video prompt for Scene ${sceneIndex + 1}...`,
+        type: 'status',
+      });
+
+      const response = await enhancePrompt({
+        prompt: currentPrompt,
+        context: {
+          sceneTitle: scene.description,
+          characterDescription: project.characterDescription,
+        },
+      });
+
+      if (response.success && response.data?.enhancedPrompt) {
+        updateSceneVideoPrompt(sceneIndex, response.data.enhancedPrompt);
+        addChatMessage({
+          role: 'agent',
+          content: `✓ Enhanced video prompt for Scene ${sceneIndex + 1}`,
+          type: 'status',
+        });
+      } else {
+        throw new Error(response.error || 'Failed to enhance prompt');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to enhance prompt';
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Error: ${errorMessage}`,
+        type: 'error',
+      });
+    } finally {
+      setIsEnhancing(false);
+    }
+  };
+
   const getStatusBadge = () => {
     switch (status) {
       case 'completed':
@@ -560,10 +664,24 @@ export default function SceneCard({
         {getStatusBadge()}
       </div>
 
-      {/* Image Prompt Preview */}
-      <p className="text-xs text-white/50 line-clamp-2">
-        {scene.imagePrompt}
-      </p>
+      {/* Video Prompt Preview with Enhance Button */}
+      <div className="flex items-start gap-1.5">
+        <p className="text-xs text-white/50 line-clamp-2 flex-1">
+          {scene.videoPrompt || scene.imagePrompt}
+        </p>
+        <button
+          onClick={handleEnhancePrompt}
+          disabled={isEnhancing || isGenerating}
+          className="flex-shrink-0 p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          title="Enhance prompt with AI"
+        >
+          {isEnhancing ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="w-3.5 h-3.5" />
+          )}
+        </button>
+      </div>
 
       {/* Error Display with Retry (compact) */}
       {sceneError && (

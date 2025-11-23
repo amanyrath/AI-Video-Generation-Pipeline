@@ -125,6 +125,17 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
   setSceneStatus: (sceneIndex, status) => {
     set((state) => {
       const updatedScenes = [...state.scenes];
+
+      // Ensure the scene exists - if not, initialize it from storyboard
+      if (!updatedScenes[sceneIndex] && state.project?.storyboard[sceneIndex]) {
+        console.warn(`[SceneSlice] Scene ${sceneIndex} not in scenes array, initializing from storyboard`);
+        updatedScenes[sceneIndex] = {
+          ...state.project.storyboard[sceneIndex],
+          generatedImages: [],
+          status: 'pending',
+        };
+      }
+
       if (updatedScenes[sceneIndex]) {
         updatedScenes[sceneIndex] = {
           ...updatedScenes[sceneIndex],
@@ -138,12 +149,25 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
   addGeneratedImage: (sceneIndex, image) => {
     set((state) => {
       const updatedScenes = [...state.scenes];
+
+      // Ensure the scene exists - if not, initialize it from storyboard
+      if (!updatedScenes[sceneIndex] && state.project?.storyboard[sceneIndex]) {
+        console.warn(`[SceneSlice] Scene ${sceneIndex} not in scenes array, initializing from storyboard`);
+        updatedScenes[sceneIndex] = {
+          ...state.project.storyboard[sceneIndex],
+          generatedImages: [],
+          status: 'pending',
+        };
+      }
+
       if (updatedScenes[sceneIndex]) {
         updatedScenes[sceneIndex] = {
           ...updatedScenes[sceneIndex],
           generatedImages: [...updatedScenes[sceneIndex].generatedImages, image],
           status: 'image_ready',
         };
+      } else {
+        console.error(`[SceneSlice] Cannot add image to scene ${sceneIndex} - scene not found in storyboard`);
       }
       return { scenes: updatedScenes };
     });
@@ -152,6 +176,17 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
   selectImage: (sceneIndex, imageId) => {
     set((state) => {
       const updatedScenes = [...state.scenes];
+
+      // Ensure the scene exists - if not, initialize it from storyboard
+      if (!updatedScenes[sceneIndex] && state.project?.storyboard[sceneIndex]) {
+        console.warn(`[SceneSlice] Scene ${sceneIndex} not in scenes array, initializing from storyboard`);
+        updatedScenes[sceneIndex] = {
+          ...state.project.storyboard[sceneIndex],
+          generatedImages: [],
+          status: 'pending',
+        };
+      }
+
       if (updatedScenes[sceneIndex]) {
         updatedScenes[sceneIndex] = {
           ...updatedScenes[sceneIndex],
@@ -190,20 +225,31 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
   setVideoPath: (sceneIndex, videoPath, actualDuration) => {
     set((state) => {
       const updatedScenes = [...state.scenes];
+
+      // Ensure the scene exists - if not, initialize it from storyboard
+      if (!updatedScenes[sceneIndex] && state.project?.storyboard[sceneIndex]) {
+        console.warn(`[SceneSlice] Scene ${sceneIndex} not in scenes array, initializing from storyboard`);
+        updatedScenes[sceneIndex] = {
+          ...state.project.storyboard[sceneIndex],
+          generatedImages: [],
+          status: 'pending',
+        };
+      }
+
       if (updatedScenes[sceneIndex]) {
         const videoId = uuidv4();
         const newVideo: GeneratedVideo = {
           id: videoId,
-          url: videoPath.startsWith('http://') || videoPath.startsWith('https://') 
-            ? videoPath 
+          url: videoPath.startsWith('http://') || videoPath.startsWith('https://')
+            ? videoPath
             : `/api/serve-video?path=${encodeURIComponent(videoPath)}`,
           localPath: videoPath,
           actualDuration,
           timestamp: new Date().toISOString(),
         };
-        
+
         const existingVideos = updatedScenes[sceneIndex].generatedVideos || [];
-        
+
         updatedScenes[sceneIndex] = {
           ...updatedScenes[sceneIndex],
           generatedVideos: [...existingVideos, newVideo],
@@ -269,6 +315,16 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
     set((state) => {
       const updatedScenes = [...state.scenes];
       const updatedStoryboard = state.project ? [...state.project.storyboard] : [];
+
+      // Ensure the scene exists - if not, initialize it from storyboard
+      if (!updatedScenes[sceneIndex] && state.project?.storyboard[sceneIndex]) {
+        console.warn(`[SceneSlice] Scene ${sceneIndex} not in scenes array, initializing from storyboard`);
+        updatedScenes[sceneIndex] = {
+          ...state.project.storyboard[sceneIndex],
+          generatedImages: [],
+          status: 'pending',
+        };
+      }
 
       if (updatedScenes[sceneIndex]) {
         updatedScenes[sceneIndex] = {
@@ -503,11 +559,12 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
 
     try {
       const sceneState = state.scenes[sceneIndex];
+      const totalScenes = state.project?.storyboard?.length || 5;
       if (!sceneState?.generatedImages.length) {
         await state.generateImageForScene(sceneIndex);
       } else if (!sceneState.videoLocalPath) {
         await state.generateVideoForScene(sceneIndex);
-      } else if (sceneIndex < 4 && !sceneState.seedFrames?.length) {
+      } else if (sceneIndex < totalScenes - 1 && !sceneState.seedFrames?.length) {
         await state.extractFramesForScene(sceneIndex);
       }
     } catch (error) {

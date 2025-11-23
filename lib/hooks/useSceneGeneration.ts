@@ -110,15 +110,24 @@ export function useSceneGeneration(
 
       addChatMessage({
         role: 'agent',
-        content: `Starting Scene ${sceneIndex + 1}/5: Generating image...`,
+        content: `Starting Scene ${sceneIndex + 1}/${project.storyboard.length}: Generating image...`,
         type: 'status',
       });
 
       const seedFrameUrl = getSeedFrameUrl(sceneIndex);
-      // Reference images would come from uploaded images for object consistency
-      // For now, using empty array as placeholder
-      const referenceImageUrls: string[] = [];
-      
+
+      // Get reference images from brand assets (uploaded images) for object consistency
+      // These are the images uploaded in the brand identity screen
+      const referenceImageUrls: string[] = (project.referenceImageUrls || []).slice(0, 3);
+
+      if (referenceImageUrls.length > 0) {
+        addChatMessage({
+          role: 'agent',
+          content: `Using ${referenceImageUrls.length} reference image(s) from brand assets for object consistency`,
+          type: 'status',
+        });
+      }
+
       // OPTION 1: Reference image is the PRIMARY driver for ALL scenes
       // Use reference image as seed (primary) + seed frame via IP-Adapter (for continuity in scenes 1-4)
       const seedImage = referenceImageUrls.length > 0 ? referenceImageUrls[0] : undefined;
@@ -209,17 +218,33 @@ export function useSceneGeneration(
 
       addChatMessage({
         role: 'agent',
-        content: `Generating video for Scene ${sceneIndex + 1}/5...`,
+        content: `Generating video for Scene ${sceneIndex + 1}/${project.storyboard.length}...`,
         type: 'status',
       });
 
       const seedFrameUrl = getSeedFrameUrl(sceneIndex);
+
+      // Get reference images from brand assets for object consistency
+      const referenceImageUrls: string[] = (project.referenceImageUrls || []).slice(0, 3);
+
+      if (referenceImageUrls.length > 0) {
+        addChatMessage({
+          role: 'agent',
+          content: `Using ${referenceImageUrls.length} reference image(s) from brand assets for video consistency`,
+          type: 'status',
+        });
+      }
+
       const response = await generateVideo(
         selectedImage.url,
         scene.videoPrompt || scene.imagePrompt, // Fallback to imagePrompt for backward compatibility
         project.id,
         sceneIndex,
-        seedFrameUrl
+        seedFrameUrl,
+        undefined, // duration - use default
+        undefined, // subsceneIndex
+        undefined, // modelParameters
+        referenceImageUrls // Pass reference images for object consistency
       );
 
       if (!response.predictionId) {

@@ -27,6 +27,7 @@ export default function StartingScreen({
   const [isDeletingProject, setIsDeletingProject] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | 'all'>('all');
+  const [targetDuration, setTargetDuration] = useState(30); // Default to 30s mode
 
   // Use ref to prevent race conditions from rapid clicks
   const isTransitioningRef = useRef(false);
@@ -186,7 +187,7 @@ export default function StartingScreen({
     // Navigate directly to style selection (storyboard will be generated after style is chosen)
     setIsGeneratingStoryboard(false);
     isTransitioningRef.current = false;
-    router.push(`/style?prompt=${encodeURIComponent(prompt.trim())}${carParams}`);
+    router.push(`/style?prompt=${encodeURIComponent(prompt.trim())}&targetDuration=${targetDuration}${carParams}`);
   };
 
   return (
@@ -416,28 +417,60 @@ export default function StartingScreen({
               rows={6}
               className="w-full px-8 py-6 bg-white/5 border border-white/20 rounded-3xl text-white text-xl font-light placeholder-white/40 focus:outline-none focus:border-white/40 focus:bg-white/10 backdrop-blur-sm transition-all resize-none disabled:opacity-50 disabled:cursor-not-allowed shadow-2xl"
             />
-            {/* Gallery Icon - Bottom Left */}
-            <input
-              type="file"
-              id="image-upload"
-              accept="image/*"
-              multiple
-              onChange={handleFileInput}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => document.getElementById('image-upload')?.click()}
-              className="absolute bottom-4 left-4 p-2 text-white/20 hover:text-white/50 transition-colors"
-              title="Add reference images"
-            >
-              <Image className="w-5 h-5" />
-            </button>
+            {/* Bottom Controls - Gallery Icon and Duration Toggle */}
+            <div className="absolute bottom-4 left-4 right-4 flex items-center gap-3">
+              {/* Gallery Icon */}
+              <input
+                type="file"
+                id="image-upload"
+                accept="image/*"
+                multiple
+                onChange={handleFileInput}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => document.getElementById('image-upload')?.click()}
+                className="p-2 text-white/20 hover:text-white/50 transition-colors"
+                title="Add reference images"
+              >
+                <Image className="w-5 h-5" />
+              </button>
+
+              {/* Divider */}
+              <div className="h-6 w-px bg-white/20" />
+
+              {/* Duration Toggle */}
+              <div className="flex items-center bg-white/5 border border-white/20 rounded-lg p-0.5 backdrop-blur-sm">
+                <button
+                  type="button"
+                  onClick={() => setTargetDuration(30)}
+                  className={`px-3 py-1 text-xs font-medium rounded transition-all ${
+                    targetDuration === 30
+                      ? 'bg-white/20 text-white'
+                      : 'text-white/50 hover:text-white/70'
+                  }`}
+                >
+                  30s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTargetDuration(60)}
+                  className={`px-3 py-1 text-xs font-medium rounded transition-all ${
+                    targetDuration === 60
+                      ? 'bg-white/20 text-white'
+                      : 'text-white/50 hover:text-white/70'
+                  }`}
+                >
+                  60s
+                </button>
+              </div>
+            </div>
           </div>
 
             {/* Image Previews */}
             {images.length > 0 && (
-              <div className="flex flex-wrap gap-3 animate-slide-down">
+              <div className="flex flex-wrap gap-3 mt-6 animate-slide-down">
                 {images.map((image, index) => (
                   <div key={index} className="relative group/image">
                     <img

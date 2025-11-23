@@ -102,11 +102,16 @@ async function uploadLocalFileToS3(url: string, projectId: string): Promise<stri
 
     console.log(`[S3 Upload] Uploaded to S3 successfully: ${storedFile.s3Key}`);
 
-    // Return pre-signed URL
-    const s3Url = await storageService.getPreSignedUrl(storedFile.s3Key, 3600); // 1 hour expiry
-    console.log(`[S3 Upload] Pre-signed URL generated`);
+    // Return pre-signed URL if S3 upload succeeded
+    if (storedFile.s3Key) {
+      const s3Url = await storageService.getPreSignedUrl(storedFile.s3Key, 3600); // 1 hour expiry
+      console.log(`[S3 Upload] Pre-signed URL generated`);
+      return s3Url;
+    }
 
-    return s3Url;
+    // Fall back to the storedFile.url if S3 upload failed
+    console.log(`[S3 Upload] No S3 key available, using fallback URL: ${storedFile.url}`);
+    return storedFile.url;
   } catch (error) {
     console.error('[S3 Upload] Failed to upload local file to S3:', error);
     return url; // Return original URL on error

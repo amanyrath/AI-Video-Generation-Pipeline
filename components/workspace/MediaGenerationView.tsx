@@ -295,74 +295,120 @@ export default function MediaGenerationView() {
         }
       }
 
-      // Generate 3 images in parallel
-      const imagePromises = Array(3).fill(null).map(async (_, index) => {
-        try {
-          const response = await generateImage({
-            prompt: editedPrompt || currentScene.imagePrompt,
-            projectId: project.id,
-            sceneIndex: currentSceneIndex,
-            seedImage: seedImageUrl,
-            referenceImageUrls,
-            seedFrame: seedFrameUrl,
-            negativePrompt: editedNegativePrompt || currentScene.negativePrompt,
-          });
+      // Helper to check if error is retryable (Replicate transient errors)
+      const isRetryableError = (error: Error): boolean => {
+        const msg = error.message.toLowerCase();
+        return msg.includes('director') ||
+               msg.includes('e6716') ||
+               msg.includes('unexpected error') ||
+               msg.includes('temporary server') ||
+               msg.includes('internal server error');
+      };
 
-          if (!response.predictionId) {
-            throw new Error('Failed to get prediction ID from image generation response');
-          }
+      // Generate single image with retry logic
+      const generateSingleImage = async (index: number, maxRetries: number = 2): Promise<void> => {
+        let lastError: Error | null = null;
 
-          setGeneratingImages(prev => {
-            const updated = [...prev];
-            updated[index] = {
-              predictionId: response.predictionId || '',
-              status: response.status || 'starting',
-            };
-            return updated;
-          });
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            if (attempt > 0) {
+              console.log(`[MediaGeneration] Retrying image ${index + 1} (attempt ${attempt + 1}/${maxRetries + 1})`);
+              // Brief delay before retry
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
 
-          const statusResponse = await pollImageStatus(
-            response.predictionId || '',
-            {
-              interval: 2000,
+            const response = await generateImage({
+              prompt: editedPrompt || currentScene.imagePrompt,
               projectId: project.id,
               sceneIndex: currentSceneIndex,
-              prompt: editedPrompt || currentScene.imagePrompt,
-              onProgress: (status) => {
-                setGeneratingImages(prev => {
-                  const updated = [...prev];
-                  updated[index] = {
-                    ...updated[index],
-                    status: status.status === 'canceled' ? 'failed' : status.status,
-                  };
-                  return updated;
-                });
-              },
-            }
-          );
+              seedImage: seedImageUrl,
+              referenceImageUrls,
+              seedFrame: seedFrameUrl,
+              negativePrompt: editedNegativePrompt || currentScene.negativePrompt,
+            });
 
-          if (statusResponse.status === 'succeeded' && statusResponse.image) {
-            addGeneratedImage(currentSceneIndex, statusResponse.image);
-
-            if (index === 0 && !preserveSelection) {
-              setSelectedImageId(statusResponse.image.id);
-              selectImage(currentSceneIndex, statusResponse.image.id);
-            } else if (preserveSelection && currentSeedImageId === currentSelectedImageBeforeClear?.id) {
-              setSelectedImageId(currentSelectedImageBeforeClear.id);
+            if (!response.predictionId) {
+              throw new Error('Failed to get prediction ID from image generation response');
             }
 
             setGeneratingImages(prev => {
               const updated = [...prev];
               updated[index] = {
-                ...updated[index],
-                status: 'succeeded',
-                image: statusResponse.image,
+                predictionId: response.predictionId || '',
+                status: response.status || 'starting',
               };
               return updated;
             });
-          } else {
-            throw new Error(statusResponse.error || 'Image generation failed');
+
+            const statusResponse = await pollImageStatus(
+              response.predictionId || '',
+              {
+                interval: 2000,
+                projectId: project.id,
+                sceneIndex: currentSceneIndex,
+                prompt: editedPrompt || currentScene.imagePrompt,
+                onProgress: (status) => {
+                  setGeneratingImages(prev => {
+                    const updated = [...prev];
+                    updated[index] = {
+                      ...updated[index],
+                      status: status.status === 'canceled' ? 'failed' : status.status,
+                    };
+                    return updated;
+                  });
+                },
+              }
+            );
+
+            if (statusResponse.status === 'succeeded' && statusResponse.image) {
+              addGeneratedImage(currentSceneIndex, statusResponse.image);
+
+              if (index === 0 && !preserveSelection) {
+                setSelectedImageId(statusResponse.image.id);
+                selectImage(currentSceneIndex, statusResponse.image.id);
+              } else if (preserveSelection && currentSeedImageId === currentSelectedImageBeforeClear?.id) {
+                setSelectedImageId(currentSelectedImageBeforeClear.id);
+              }
+
+              setGeneratingImages(prev => {
+                const updated = [...prev];
+                updated[index] = {
+                  ...updated[index],
+                  status: 'succeeded',
+                  image: statusResponse.image,
+                };
+                return updated;
+              });
+
+              // Success - exit retry loop
+              return;
+            } else {
+              throw new Error(statusResponse.error || 'Image generation failed');
+            }
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+
+            // Check if we should retry
+            if (attempt < maxRetries && isRetryableError(lastError)) {
+              console.warn(`[MediaGeneration] Retryable error for image ${index + 1}: ${lastError.message}`);
+              continue; // Try again
+            }
+
+            // No more retries or non-retryable error
+            throw lastError;
           }
+        }
+
+        // Should not reach here, but just in case
+        if (lastError) {
+          throw lastError;
+        }
+      };
+
+      // Generate 3 images in parallel with retry logic
+      const imagePromises = Array(3).fill(null).map(async (_, index) => {
+        try {
+          await generateSingleImage(index, 2); // Max 2 retries per image
         } catch (error) {
           console.error(`Failed to generate image ${index + 1}:`, error);
           setGeneratingImages(prev => {

@@ -3,11 +3,12 @@
 import { useProjectStore, useSceneStore, useUIStore } from '@/lib/state/project-store';
 import VideoPlayer from './VideoPlayer';
 import SeedFrameSelector from './SeedFrameSelector';
-import { Loader2, Image as ImageIcon, Video, CheckCircle2, X, Edit2, Save, X as XIcon, Upload, XCircle, ChevronUp, ChevronDown, Trash2, Copy } from 'lucide-react';
+import { Loader2, Image as ImageIcon, Video, CheckCircle2, X, Edit2, Save, X as XIcon, Upload, XCircle, ChevronUp, ChevronDown, Trash2, Copy, Sparkles } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { generateImage, pollImageStatus, generateVideo, pollVideoStatus, uploadImageToS3, extractFrames, uploadImages, deleteGeneratedImage } from '@/lib/api-client';
+import { generateImage, pollImageStatus, generateVideo, pollVideoStatus, uploadImageToS3, extractFrames, uploadImages, deleteGeneratedImage, enhancePrompt } from '@/lib/api-client';
 import { GeneratedImage, SeedFrame } from '@/lib/types';
 import { useMediaDragDrop } from '@/lib/hooks/useMediaDragDrop';
+import { getPublicBackgrounds, getPublicBackgroundUrl, PublicBackground } from '@/lib/backgrounds/public-backgrounds';
 
 interface ImagePreviewModalProps {
   image: GeneratedImage;
@@ -65,6 +66,7 @@ export default function EditorView() {
     setSeedFrames,
     selectSeedFrame,
     updateScenePrompt,
+    updateSceneVideoPrompt,
     updateSceneSettings,
     duplicateScene,
   } = useSceneStore();
@@ -97,7 +99,9 @@ export default function EditorView() {
   const [enlargedSeedFrameUrl, setEnlargedSeedFrameUrl] = useState<string | null>(null);
   const [seedImageId, setSeedImageId] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const [isEnhancingPrompt, setIsEnhancingPrompt] = useState(false);
   const videoGenerationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [publicBackgrounds, setPublicBackgrounds] = useState<PublicBackground[]>([]);
 
   const handleDuplicateScene = async () => {
     if (!project || isDuplicating) return;
@@ -128,6 +132,63 @@ export default function EditorView() {
       setIsDuplicating(false);
     }
   };
+
+  const handleEnhanceVideoPrompt = async () => {
+    if (!project || isEnhancingPrompt) return;
+
+    const currentPrompt = editedVideoPrompt || currentScene?.videoPrompt || currentScene?.imagePrompt;
+    if (!currentPrompt) {
+      addChatMessage({
+        role: 'agent',
+        content: `No video prompt to enhance for Scene ${currentSceneIndex + 1}`,
+        type: 'error',
+      });
+      return;
+    }
+
+    setIsEnhancingPrompt(true);
+    try {
+      addChatMessage({
+        role: 'agent',
+        content: `Enhancing video prompt for Scene ${currentSceneIndex + 1}...`,
+        type: 'status',
+      });
+
+      const response = await enhancePrompt({
+        prompt: currentPrompt,
+        context: {
+          sceneTitle: currentScene?.description,
+          characterDescription: project.characterDescription,
+        },
+      });
+
+      if (response.success && response.data?.enhancedPrompt) {
+        setEditedVideoPrompt(response.data.enhancedPrompt);
+        updateSceneVideoPrompt(currentSceneIndex, response.data.enhancedPrompt);
+        addChatMessage({
+          role: 'agent',
+          content: `✓ Enhanced video prompt for Scene ${currentSceneIndex + 1}`,
+          type: 'status',
+        });
+      } else {
+        throw new Error(response.error || 'Failed to enhance prompt');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to enhance prompt';
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Error: ${errorMessage}`,
+        type: 'error',
+      });
+    } finally {
+      setIsEnhancingPrompt(false);
+    }
+  };
+
+  // Load public backgrounds on mount
+  useEffect(() => {
+    getPublicBackgrounds().then(setPublicBackgrounds).catch(console.error);
+  }, []);
 
   if (!project || !project.storyboard || project.storyboard.length === 0) {
     return (
@@ -372,85 +433,120 @@ export default function EditorView() {
         }
       }
 
-      // Generate 3 images in parallel
-      const imagePromises = Array(3).fill(null).map(async (_, index) => {
-        try {
-          // Create prediction
-          // Strategy: Use seed frame as seed image for image-to-image generation
-          // For Scene 0: Use reference image as seed image if available
-          // For Scenes 1-4: Use seed frame from previous scene as seed image
-          const response = await generateImage({
-            prompt: editedPrompt || currentScene.imagePrompt,
-            projectId: project.id,
-            sceneIndex: currentSceneIndex,
-            seedImage: seedImageUrl, // Custom image input, seed frame from previous scene, or reference image for Scene 0
-            referenceImageUrls, // Reference images via IP-Adapter (for object consistency)
-            seedFrame: seedFrameUrl, // Seed frame URL (same as seedImage for scenes 1-4, unless custom image input is used)
-            negativePrompt: editedNegativePrompt || currentScene.negativePrompt, // Optional negative prompt
-          });
+      // Helper to check if error is retryable (Replicate transient errors)
+      const isRetryableError = (error: Error): boolean => {
+        const msg = error.message.toLowerCase();
+        return msg.includes('director') ||
+               msg.includes('e6716') ||
+               msg.includes('unexpected error') ||
+               msg.includes('temporary server') ||
+               msg.includes('internal server error');
+      };
 
-          // Check if predictionId exists
-          if (!response.predictionId) {
-            throw new Error('Failed to get prediction ID from image generation response');
-          }
+      // Generate single image with retry logic
+      const generateSingleImage = async (index: number, maxRetries: number = 2): Promise<void> => {
+        let lastError: Error | null = null;
 
-          // Update generating state
-          setGeneratingImages(prev => {
-            const updated = [...prev];
-            updated[index] = {
-              predictionId: response.predictionId || '',
-              status: response.status || 'starting',
-            };
-            return updated;
-          });
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            if (attempt > 0) {
+              console.log(`[EditorView] Retrying image ${index + 1} (attempt ${attempt + 1}/${maxRetries + 1})`);
+              // Brief delay before retry
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
 
-          // Poll for completion
-          const statusResponse = await pollImageStatus(
-            response.predictionId || '',
-            {
-              interval: 2000,
+            const response = await generateImage({
+              prompt: editedPrompt || currentScene.imagePrompt,
               projectId: project.id,
               sceneIndex: currentSceneIndex,
-              prompt: editedPrompt || currentScene.imagePrompt,
-              onProgress: (status) => {
-                setGeneratingImages(prev => {
-                  const updated = [...prev];
-                  updated[index] = {
-                    ...updated[index],
-                    status: status.status === 'canceled' ? 'failed' : status.status,
-                  };
-                  return updated;
-                });
-              },
-            }
-          );
+              seedImage: seedImageUrl,
+              referenceImageUrls,
+              seedFrame: seedFrameUrl,
+              negativePrompt: editedNegativePrompt || currentScene.negativePrompt,
+            });
 
-          if (statusResponse.status === 'succeeded' && statusResponse.image) {
-            // Add image to store
-            addGeneratedImage(currentSceneIndex, statusResponse.image);
-
-            // Auto-select first image when it's generated (unless we preserved a previous selection)
-            if (index === 0 && !preserveSelection) {
-              setSelectedImageId(statusResponse.image.id);
-              selectImage(currentSceneIndex, statusResponse.image.id);
-            } else if (preserveSelection && currentSeedImageId === currentSelectedImageBeforeClear?.id) {
-              // Restore the selected image ID if we preserved it
-              setSelectedImageId(currentSelectedImageBeforeClear.id);
+            if (!response.predictionId) {
+              throw new Error('Failed to get prediction ID from image generation response');
             }
 
-            // Update generating state
             setGeneratingImages(prev => {
               const updated = [...prev];
               updated[index] = {
-                ...updated[index],
-                status: 'succeeded',
-                image: statusResponse.image,
+                predictionId: response.predictionId || '',
+                status: response.status || 'starting',
               };
               return updated;
             });
-          } else {
-            throw new Error(statusResponse.error || 'Image generation failed');
+
+            const statusResponse = await pollImageStatus(
+              response.predictionId || '',
+              {
+                interval: 2000,
+                projectId: project.id,
+                sceneIndex: currentSceneIndex,
+                prompt: editedPrompt || currentScene.imagePrompt,
+                onProgress: (status) => {
+                  setGeneratingImages(prev => {
+                    const updated = [...prev];
+                    updated[index] = {
+                      ...updated[index],
+                      status: status.status === 'canceled' ? 'failed' : status.status,
+                    };
+                    return updated;
+                  });
+                },
+              }
+            );
+
+            if (statusResponse.status === 'succeeded' && statusResponse.image) {
+              addGeneratedImage(currentSceneIndex, statusResponse.image);
+
+              if (index === 0 && !preserveSelection) {
+                setSelectedImageId(statusResponse.image.id);
+                selectImage(currentSceneIndex, statusResponse.image.id);
+              } else if (preserveSelection && currentSeedImageId === currentSelectedImageBeforeClear?.id) {
+                setSelectedImageId(currentSelectedImageBeforeClear.id);
+              }
+
+              setGeneratingImages(prev => {
+                const updated = [...prev];
+                updated[index] = {
+                  ...updated[index],
+                  status: 'succeeded',
+                  image: statusResponse.image,
+                };
+                return updated;
+              });
+
+              // Success - exit retry loop
+              return;
+            } else {
+              throw new Error(statusResponse.error || 'Image generation failed');
+            }
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+
+            // Check if we should retry
+            if (attempt < maxRetries && isRetryableError(lastError)) {
+              console.warn(`[EditorView] Retryable error for image ${index + 1}: ${lastError.message}`);
+              continue; // Try again
+            }
+
+            // No more retries or non-retryable error
+            throw lastError;
           }
+        }
+
+        // Should not reach here, but just in case
+        if (lastError) {
+          throw lastError;
+        }
+      };
+
+      // Generate 3 images in parallel with retry logic
+      const imagePromises = Array(3).fill(null).map(async (_, index) => {
+        try {
+          await generateSingleImage(index, 2); // Max 2 retries per image
         } catch (error) {
           console.error(`Failed to generate image ${index + 1}:`, error);
           setGeneratingImages(prev => {
@@ -677,11 +773,17 @@ export default function EditorView() {
               );
 
               if (response.frames && response.frames.length > 0) {
-                // Upload seed frames to S3 so they can be used for video generation
-                const uploadedFrames = await Promise.all(
+                // Process seed frames - they may already be uploaded to S3 by the backend
+                const processedFrames = await Promise.all(
                   response.frames.map(async (frame) => {
+                    // Check if frame is already an HTTP URL (already on S3)
+                    if (frame.url.startsWith('http://') || frame.url.startsWith('https://')) {
+                      console.log(`[EditorView] Frame already on S3: ${frame.url.substring(0, 60)}...`);
+                      return frame as SeedFrame;
+                    }
+
+                    // If it's a local path, try to upload to S3
                     try {
-                      // Upload frame to S3
                       const { s3Url } = await uploadImageToS3(frame.url, project.id);
                       return {
                         ...frame,
@@ -705,8 +807,8 @@ export default function EditorView() {
                 );
 
                 // Store seed frames in CURRENT scene (to be used for next scene)
-                setSeedFrames(currentSceneIndex, uploadedFrames);
-                console.log(`Extracted and stored ${uploadedFrames.length} seed frames for Scene ${currentSceneIndex + 1} (for use in Scene ${currentSceneIndex + 2})`);
+                setSeedFrames(currentSceneIndex, processedFrames);
+                console.log(`Extracted and stored ${processedFrames.length} seed frames for Scene ${currentSceneIndex + 1} (for use in Scene ${currentSceneIndex + 2})`);
               }
             }
           } catch (error) {
@@ -900,6 +1002,15 @@ export default function EditorView() {
     if (itemType === 'video') {
       // Videos are not supported as image input
       return null;
+    }
+
+    // Check for public backgrounds (IDs start with 'public-bg-')
+    if (itemId.startsWith('public-bg-')) {
+      const bgId = itemId.replace('public-bg-', '');
+      const publicBg = publicBackgrounds.find(bg => bg.id === bgId);
+      if (publicBg) {
+        return getPublicBackgroundUrl(publicBg.filename);
+      }
     }
 
     // Search in generated images
@@ -1330,14 +1441,28 @@ export default function EditorView() {
               <label className="block text-xs font-medium text-white mb-1">
                 Video Prompt <span className="text-white/60">*</span>
               </label>
-              <textarea
-                value={editedVideoPrompt}
-                onChange={(e) => setEditedVideoPrompt(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 focus:border-white/40 text-white placeholder-white/40 resize-none backdrop-blur-sm"
-                rows={4}
-                placeholder="Enter video prompt describing motion/action (required)..."
-                required
-              />
+              <div className="relative">
+                <textarea
+                  value={editedVideoPrompt}
+                  onChange={(e) => setEditedVideoPrompt(e.target.value)}
+                  className="w-full px-3 py-2 pr-12 text-sm bg-white/5 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 focus:border-white/40 text-white placeholder-white/40 resize-none backdrop-blur-sm"
+                  rows={4}
+                  placeholder="Enter video prompt describing motion/action (required)..."
+                  required
+                />
+                <button
+                  onClick={handleEnhanceVideoPrompt}
+                  disabled={isEnhancingPrompt || isGeneratingVideo}
+                  className="absolute bottom-2 right-2 p-1.5 rounded-md text-white/40 hover:text-white/80 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  title="Enhance prompt with AI"
+                >
+                  {isEnhancingPrompt ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Negative Prompt */}

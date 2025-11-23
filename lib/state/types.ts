@@ -21,12 +21,14 @@ export interface ProjectCoreSlice {
 
   createProject: (name: string, prompt: string, targetDuration?: number, characterDescription?: string) => Promise<void>;
   saveProjectToBackend: (name: string, prompt: string, targetDuration?: number, characterDescription?: string) => Promise<string>;
+  updateProject: (updates: Partial<ProjectState>) => void;
   updateProjectMetadata: (updates: {
     name?: string;
     characterDescription?: string;
     status?: 'STORYBOARD' | 'SCENE_GENERATION' | 'STITCHING' | 'COMPLETED';
     finalVideoUrl?: string;
     finalVideoS3Key?: string;
+    targetDuration?: number;
   }) => Promise<void>;
   setStoryboard: (scenes: Scene[]) => void;
   updateScene: (sceneId: string, updates: Partial<Scene>) => void;

@@ -118,9 +118,9 @@ export async function GET(
     if (projectId && sceneIndex !== null) {
       try {
         const sceneIndexNum = parseInt(sceneIndex, 10);
-        if (isNaN(sceneIndexNum) || sceneIndexNum < 0 || sceneIndexNum > 4) {
+        if (isNaN(sceneIndexNum) || sceneIndexNum < 0) {
           return NextResponse.json(
-            { success: false, error: 'Invalid sceneIndex' },
+            { success: false, error: 'Invalid sceneIndex (must be >= 0)' },
             { status: 400 }
           );
         }

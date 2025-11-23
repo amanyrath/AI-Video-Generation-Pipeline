@@ -568,7 +568,7 @@ export async function generateVideo(
   projectId: string,
   sceneIndex: number,
   sceneId?: string
-): Promise<{ localPath: string; s3Url: string; s3Key: string; storedFile: StoredFile }> {
+): Promise<{ localPath: string; s3Url: string; s3Key?: string; storedFile: StoredFile }> {
   // Validate inputs
   if (!imageUrl) {
     throw new Error('Image URL is required');

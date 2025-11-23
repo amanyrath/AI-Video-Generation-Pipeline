@@ -34,19 +34,18 @@ export function setRuntimeTextModel(model: string) {
 }
 
 /**
- * System prompt for storyboard generation
- * From PRD Appendix: Prompt Templates
- *
- * Updated to enforce SHORT, concise scene descriptions for advertising, with a default
- * bias toward product and automotive work and an Arri Alexa commercial look.
+ * Generates system prompt based on target duration and scene count
  */
-const STORYBOARD_SYSTEM_PROMPT = `You are a professional video storyboard creator specializing in performance-focused advertising,
+function generateSystemPrompt(targetDuration: number, sceneCount: number): string {
+  const durationPerScene = Math.round(targetDuration / sceneCount);
+
+  return `You are a professional video storyboard creator specializing in performance-focused advertising,
 with particular strength in product and automotive commercials.
 
-Given a short creative brief for a video advertisement, create exactly 3 scenes.
+Given a short creative brief for a video advertisement, create exactly ${sceneCount} scenes for a ${targetDuration}-second video.
 
 For each scene:
-- Duration: 8 seconds (optimized for Google Veo 3.1 video generation)
+- Duration: approximately ${durationPerScene} seconds (total must equal ${targetDuration}s ±2s tolerance)
 - Clear visual focus and logical progression from the previous scene
 - Keep the scene description SHORT and CONCISE - 3-6 words maximum
 - Provide a detailed imagePrompt for visual generation (static image description)
@@ -67,13 +66,14 @@ Output strictly valid JSON in this format:
       "description": "Short 3-6 word phrase describing the scene",
       "imagePrompt": "Detailed prompt for image generation including shot type, subject, style, lighting, composition.",
       "videoPrompt": "Detailed prompt for video generation describing motion, action, camera movement, and dynamic elements.",
-      "duration": 8
+      "duration": ${durationPerScene}
     },
     ...
   ]
 }
 
 Keep image prompts specific, visual, and production-ready. Keep video prompts focused on motion, action, and dynamic elements.`;
+}
 
 // ============================================================================
 // Types
@@ -127,15 +127,26 @@ interface RawStoryboardResponse {
 // ============================================================================
 
 /**
+ * Determines scene count based on target duration
+ * 30s = 3 scenes, 60s = 7 scenes, default = 3 scenes
+ */
+function getSceneCountForDuration(targetDuration: number): number {
+  if (targetDuration === 30) return 3;
+  if (targetDuration === 60) return 7;
+  // Default to 3 scenes for any other duration
+  return 3;
+}
+
+/**
  * Calls OpenRouter API to generate storyboard
  * @param prompt User's product/ad description
- * @param targetDuration Target video duration in seconds (default: 15)
+ * @param targetDuration Target video duration in seconds (default: 30)
  * @param referenceImageUrls Optional array of reference image URLs
  * @returns Raw JSON response from OpenRouter
  */
 async function callOpenRouterAPI(
   prompt: string,
-  targetDuration: number = 15,
+  targetDuration: number = 30,
   referenceImageUrls?: string[]
 ): Promise<OpenRouterResponse> {
   const apiKey = USE_OPENAI_DIRECT ? process.env.OPENAI_API_KEY : process.env.OPENROUTER_API_KEY;
@@ -148,12 +159,14 @@ async function callOpenRouterAPI(
 
   console.log(`[Storyboard] Using ${USE_OPENAI_DIRECT ? 'OpenAI Direct' : 'OpenRouter'} API`);
 
+  const sceneCount = getSceneCountForDuration(targetDuration);
+  console.log(`[Storyboard] Target duration: ${targetDuration}s → Scene count: ${sceneCount}`);
   const userPrompt = `You are creating a performance-focused advertising storyboard (with strong support for product and automotive spots) for a ${targetDuration}-second video ad.
 
 Creative brief from the user:
 ${prompt}
 
-Use the structure [SHOT TYPE] + [SUBJECT] + [ACTION] + [STYLE] + [CAMERA MOVEMENT] + [AUDIO CUES] for each of the 5 scene descriptions.
+Use the structure [SHOT TYPE] + [SUBJECT] + [ACTION] + [STYLE] + [CAMERA MOVEMENT] + [AUDIO CUES] for each of the ${sceneCount} scene descriptions.
 
 Ensure the total duration of all scenes equals ${targetDuration} seconds (±2 seconds tolerance).`;
 
@@ -223,12 +236,13 @@ Ensure the total duration of all scenes equals ${targetDuration} seconds (±2 se
   }
 
   const modelToUse = USE_OPENAI_DIRECT ? OPENAI_MODEL : OPENROUTER_MODEL;
+  const systemPrompt = generateSystemPrompt(targetDuration, sceneCount);
   const requestBody: OpenRouterRequest = {
     model: modelToUse,
     messages: [
       {
         role: 'system',
-        content: STORYBOARD_SYSTEM_PROMPT + '\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text before or after the JSON object.',
+        content: systemPrompt + '\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text before or after the JSON object.',
       },
       {
         role: 'user',
@@ -344,14 +358,17 @@ function validateStoryboardResponse(
     throw new Error('Invalid response: missing or invalid scenes array');
   }
 
-  // Take first 3 scenes (LLM might return more)
-  if (rawResponse.scenes.length < 3) {
+  // Determine expected scene count based on target duration
+  const expectedSceneCount = getSceneCountForDuration(targetDuration);
+
+  // Validate we got the expected number of scenes
+  if (rawResponse.scenes.length < expectedSceneCount) {
     throw new Error(
-      `Invalid response: expected at least 3 scenes, got ${rawResponse.scenes.length}`
+      `Invalid response: expected at least ${expectedSceneCount} scenes, got ${rawResponse.scenes.length}`
     );
   }
-  // Truncate to 3 scenes if more were returned
-  rawResponse.scenes = rawResponse.scenes.slice(0, 3);
+  // Truncate to expected scene count if more were returned
+  rawResponse.scenes = rawResponse.scenes.slice(0, expectedSceneCount);
 
   // Validate each scene
   const validatedScenes: Scene[] = rawResponse.scenes.map((scene, index) => {
@@ -456,15 +473,16 @@ async function retryWithBackoff<T>(
 // ============================================================================
 
 /**
- * Generates a 5-scene storyboard from a user prompt
+ * Generates a storyboard from a user prompt
+ * Scene count is determined by target duration: 30s = 3 scenes, 60s = 7 scenes
  * @param prompt User's product/ad description
- * @param targetDuration Target video duration in seconds (default: 15)
+ * @param targetDuration Target video duration in seconds (default: 30)
  * @param referenceImageUrls Optional array of reference image URLs for visual context
- * @returns Array of 5 validated scenes with UUIDs
+ * @returns Array of validated scenes with UUIDs (3 scenes for 30s, 7 scenes for 60s)
  */
 export async function generateStoryboard(
   prompt: string,
-  targetDuration: number = 15,
+  targetDuration: number = 30,
   referenceImageUrls?: string[]
 ): Promise<Scene[]> {
   // Validate inputs
@@ -476,11 +494,14 @@ export async function generateStoryboard(
     throw new Error('Target duration must be a number between 10 and 60 seconds');
   }
 
+  const sceneCount = getSceneCountForDuration(targetDuration);
+
   const logPrefix = '[Storyboard]';
   console.log(`${logPrefix} ========================================`);
   console.log(`${logPrefix} Starting storyboard generation`);
   console.log(`${logPrefix} Prompt: "${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}"`);
   console.log(`${logPrefix} Target duration: ${targetDuration}s`);
+  console.log(`${logPrefix} Scene count: ${sceneCount}`);
   console.log(`${logPrefix} Timestamp: ${new Date().toISOString()}`);
 
   // Retry logic with exponential backoff

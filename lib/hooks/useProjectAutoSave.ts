@@ -80,7 +80,7 @@ export function useProjectAutoSave() {
         saveProjectMetadata();
       }
     };
-  }, []);
+  }, [project?.id, saveProjectMetadata]);
 
   return {
     saveNow: saveProjectMetadata,

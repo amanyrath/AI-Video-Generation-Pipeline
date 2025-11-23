@@ -6,9 +6,9 @@ import TimelineClip from './TimelineClip';
 import TimelineToolbar from './TimelineToolbar';
 import AudioTrackItem from './AudioTrackItem';
 import ImageTrackItem from './ImageTrackItem';
-import { Clock, Play, Download, Loader2, AlertCircle, RefreshCw, Film, ZoomIn, ZoomOut, X, Music, Image as ImageIcon, Plus } from 'lucide-react';
+import { Clock, Play, Download, Loader2, AlertCircle, RefreshCw, Film, ZoomIn, ZoomOut, X, Music, Image as ImageIcon, Plus, Wand2 } from 'lucide-react';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { stitchVideos, applyClipEdits, generatePreview } from '@/lib/api-client';
+import { stitchVideos, applyClipEdits, generatePreview, generateMusicTrack, pollMusicStatus } from '@/lib/api-client';
 
 export default function TimelineView() {
   const {
@@ -54,15 +54,25 @@ export default function TimelineView() {
   const [showCropDialog, setShowCropDialog] = useState(false);
   const [showAddAudioDialog, setShowAddAudioDialog] = useState(false);
   const [showAddImageDialog, setShowAddImageDialog] = useState(false);
+  const [showGenerateMusicDialog, setShowGenerateMusicDialog] = useState(false);
   const [newAudioUrl, setNewAudioUrl] = useState('');
   const [newAudioTitle, setNewAudioTitle] = useState('');
   const [newImageUrl, setNewImageUrl] = useState('');
   const [newImageTitle, setNewImageTitle] = useState('');
   const [newImageDuration, setNewImageDuration] = useState(5);
+  // Music generation state
+  const [musicGenerationMode, setMusicGenerationMode] = useState<'prompt' | 'simple' | 'video'>('simple');
+  const [musicPrompt, setMusicPrompt] = useState('');
+  const [musicMood, setMusicMood] = useState('cinematic');
+  const [musicGenre, setMusicGenre] = useState('electronic');
+  const [musicDuration, setMusicDuration] = useState(30);
+  const [isGeneratingMusic, setIsGeneratingMusic] = useState(false);
+  const [musicGenerationProgress, setMusicGenerationProgress] = useState<string>('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const timelineTrackRef = useRef<HTMLDivElement>(null);
   const preservedTimeRef = useRef<number | null>(null); // Track position to preserve after preview regeneration
   const isRestoringPositionRef = useRef(false); // Prevent seeking event from overriding restored position
+  const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map()); // Audio elements for each track
 
   // Get selected clip for crop dialog
   const selectedClip = selectedClipId ? timelineClips.find(c => c.id === selectedClipId) : null;
@@ -76,6 +86,56 @@ export default function TimelineView() {
       setCropEnd(selectedClip.trimEnd || selectedClip.sourceDuration);
     }
   }, [selectedClip]);
+
+  // Initialize and manage audio elements for each track
+  useEffect(() => {
+    audioTracks.forEach(track => {
+      if (!audioRefs.current.has(track.id)) {
+        const audio = new Audio(track.audioUrl);
+        audio.preload = 'auto';
+        audio.volume = track.volume / 100;
+        
+        // Handle audio errors
+        audio.addEventListener('error', (e) => {
+          console.error(`[Audio] Error loading track ${track.title}:`, e);
+          addChatMessage({
+            role: 'agent',
+            content: `⚠️ Failed to load audio: ${track.title}`,
+            type: 'error',
+          });
+        });
+        
+        audioRefs.current.set(track.id, audio);
+      } else {
+        // Update volume if it changed
+        const audio = audioRefs.current.get(track.id);
+        if (audio) {
+          audio.volume = track.volume / 100;
+        }
+      }
+    });
+
+    // Clean up removed tracks
+    const trackIds = new Set(audioTracks.map(t => t.id));
+    audioRefs.current.forEach((audio, id) => {
+      if (!trackIds.has(id)) {
+        audio.pause();
+        audio.src = '';
+        audioRefs.current.delete(id);
+      }
+    });
+  }, [audioTracks, addChatMessage]);
+
+  // Clean up all audio elements on unmount
+  useEffect(() => {
+    return () => {
+      audioRefs.current.forEach(audio => {
+        audio.pause();
+        audio.src = '';
+      });
+      audioRefs.current.clear();
+    };
+  }, []);
 
   // Initialize timeline clips when scenes change
   useEffect(() => {
@@ -226,6 +286,37 @@ export default function TimelineView() {
         lastVideoTimeRef.current = videoTime;
         lastUpdateTimeRef.current = performance.now();
         setCurrentTimelineTime(videoTime);
+        
+        // Sync audio tracks with video time
+        audioTracks.forEach(track => {
+          const audio = audioRefs.current.get(track.id);
+          if (!audio) return;
+
+          const isInRange = videoTime >= track.startTime && videoTime < track.endTime;
+          
+          if (isInRange) {
+            // Calculate where we should be in the audio file
+            const audioOffset = videoTime - track.startTime;
+            
+            // Only seek if we're significantly off (avoid constant seeking)
+            if (Math.abs(audio.currentTime - audioOffset) > 0.1) {
+              audio.currentTime = audioOffset;
+            }
+            
+            // Play if paused
+            if (audio.paused) {
+              audio.volume = track.volume / 100;
+              audio.play().catch(err => {
+                console.error(`[Audio] Play error for ${track.title}:`, err);
+              });
+            }
+          } else {
+            // Pause if outside range
+            if (!audio.paused) {
+              audio.pause();
+            }
+          }
+        });
       }
     };
 
@@ -302,6 +393,12 @@ export default function TimelineView() {
       // Use actual video duration for accurate end position
       const endTime = video?.duration || totalDuration;
       setCurrentTimelineTime(endTime);
+      
+      // Pause all audio tracks
+      audioRefs.current.forEach(audio => {
+        audio.pause();
+      });
+      
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = null;
@@ -315,6 +412,19 @@ export default function TimelineView() {
         setCurrentTimelineTime(videoTime);
         lastVideoTimeRef.current = videoTime;
         lastUpdateTimeRef.current = performance.now();
+        
+        // Seek all audio tracks to match video position
+        audioTracks.forEach(track => {
+          const audio = audioRefs.current.get(track.id);
+          if (audio) {
+            if (videoTime >= track.startTime && videoTime < track.endTime) {
+              const audioOffset = videoTime - track.startTime;
+              audio.currentTime = audioOffset;
+            } else {
+              audio.pause();
+            }
+          }
+        });
       }
     };
 
@@ -343,7 +453,7 @@ export default function TimelineView() {
         animationFrameRef.current = null;
       }
     };
-  }, [previewVideoUrl, isPlaying, totalDuration]);
+  }, [previewVideoUrl, isPlaying, totalDuration, audioTracks]);
 
   // Calculate playhead position on timeline (smooth, no jumps)
   // Map video time to timeline time for accurate positioning
@@ -378,8 +488,14 @@ export default function TimelineView() {
     if (!videoRef.current || !previewVideoUrl) return;
 
     if (isPlaying) {
+      // Pause video
       videoRef.current.pause();
       setIsPlaying(false);
+      
+      // Pause all audio tracks
+      audioRefs.current.forEach(audio => {
+        audio.pause();
+      });
     } else {
       // Start from beginning if at end - use actual video duration
       const effectiveDuration = actualVideoDuration || totalDuration;
@@ -389,8 +505,25 @@ export default function TimelineView() {
           videoRef.current.currentTime = 0;
         }
       }
+      
+      // Play video
       videoRef.current.play();
       setIsPlaying(true);
+      
+      // Play audio tracks that should be active at current time
+      const videoTime = videoRef.current.currentTime || 0;
+      audioTracks.forEach(track => {
+        const audio = audioRefs.current.get(track.id);
+        if (audio && videoTime >= track.startTime && videoTime < track.endTime) {
+          // Calculate offset into the audio file
+          const audioOffset = videoTime - track.startTime;
+          audio.currentTime = audioOffset;
+          audio.volume = track.volume / 100;
+          audio.play().catch(err => {
+            console.error(`[Audio] Failed to play ${track.title}:`, err);
+          });
+        }
+      });
     }
   };
 
@@ -627,6 +760,95 @@ export default function TimelineView() {
     });
   };
 
+  // Music generation handler
+  const handleGenerateMusic = async () => {
+    if (!project) return;
+
+    setIsGeneratingMusic(true);
+    setMusicGenerationProgress('Starting music generation...');
+
+    try {
+      addChatMessage({
+        role: 'agent',
+        content: `Generating AI music (${musicGenerationMode} mode)...`,
+        type: 'status',
+      });
+
+      // Build request based on mode
+      let requestBody: any = {
+        duration: musicDuration,
+      };
+
+      if (musicGenerationMode === 'prompt') {
+        if (!musicPrompt.trim()) {
+          throw new Error('Please enter a music prompt');
+        }
+        requestBody.prompt = musicPrompt;
+      } else if (musicGenerationMode === 'simple') {
+        requestBody.mood = musicMood;
+        requestBody.genre = musicGenre;
+      } else if (musicGenerationMode === 'video') {
+        // Use the preview video URL for analysis
+        if (!previewVideoUrl) {
+          throw new Error('No video available for analysis. Generate videos first.');
+        }
+        requestBody.videoUrl = previewVideoUrl;
+        requestBody.analyzeVideo = true;
+      }
+
+      // Start music generation
+      const response = await generateMusicTrack(requestBody);
+
+      if (!response.success || !response.data?.predictionId) {
+        throw new Error(response.error || 'Failed to start music generation');
+      }
+
+      setMusicGenerationProgress('Music generation in progress...');
+
+      // Poll for completion
+      const status = await pollMusicStatus(response.data.predictionId, {
+        projectId: project.id,
+        onProgress: (progressStatus) => {
+          if (progressStatus.data?.status) {
+            setMusicGenerationProgress(`Status: ${progressStatus.data.status}`);
+          }
+        },
+      });
+
+      if (!status.success || !status.data?.audioUrl) {
+        throw new Error(status.error || 'Music generation failed');
+      }
+
+      // Add the generated audio to the timeline
+      const audioUrl = status.data.localPath
+        ? `/api/serve-audio?path=${encodeURIComponent(status.data.localPath)}`
+        : status.data.audioUrl;
+
+      addAudioTrack(audioUrl, `AI Generated - ${musicGenre} ${musicMood}`, musicDuration);
+
+      addChatMessage({
+        role: 'agent',
+        content: `✓ Music generated successfully and added to timeline!`,
+        type: 'status',
+      });
+
+      // Reset dialog state
+      setShowGenerateMusicDialog(false);
+      setMusicPrompt('');
+      setMusicGenerationProgress('');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate music';
+      setMusicGenerationProgress(`Error: ${errorMessage}`);
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Music generation error: ${errorMessage}`,
+        type: 'error',
+      });
+    } finally {
+      setIsGeneratingMusic(false);
+    }
+  };
+
   // Handle click on timeline to seek
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (totalDuration <= 0) return;
@@ -759,7 +981,7 @@ export default function TimelineView() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0">
         {/* Video Preview Player */}
         {getVideoPathsForStitching().length > 0 && (
           <div className="px-6 py-4 border-b border-white/10 bg-black/50">
@@ -825,7 +1047,21 @@ export default function TimelineView() {
                     // Immediately sync timeline when user seeks
                     // But skip if we're in the middle of restoring position
                     if (videoRef.current && !isRestoringPositionRef.current) {
-                      setCurrentTimelineTime(Math.max(0, videoRef.current.currentTime || 0));
+                      const newTime = Math.max(0, videoRef.current.currentTime || 0);
+                      setCurrentTimelineTime(newTime);
+                      
+                      // Seek all audio tracks to match video position
+                      audioTracks.forEach(track => {
+                        const audio = audioRefs.current.get(track.id);
+                        if (audio) {
+                          if (newTime >= track.startTime && newTime < track.endTime) {
+                            const audioOffset = newTime - track.startTime;
+                            audio.currentTime = audioOffset;
+                          } else {
+                            audio.pause();
+                          }
+                        }
+                      });
                     }
                   }}
                   onClick={(e) => {
@@ -865,7 +1101,7 @@ export default function TimelineView() {
         )}
 
         {/* Timeline Track Section */}
-        <div className="flex-1 flex flex-col overflow-hidden px-6 py-4">
+        <div className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden px-6 py-4 custom-scrollbar">
           {/* Toolbar */}
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1050,13 +1286,32 @@ export default function TimelineView() {
                   <Music className="w-4 h-4 text-green-400" />
                   Audio Tracks
                 </h3>
-                <button
-                  onClick={() => setShowAddAudioDialog(true)}
-                  className="flex items-center gap-1.5 px-2 py-1 text-xs bg-green-600/20 hover:bg-green-600/30 text-green-400 rounded border border-green-500/30 transition-colors"
-                >
-                  <Plus className="w-3 h-3" />
-                  Add Audio
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowGenerateMusicDialog(true)}
+                    disabled={isGeneratingMusic}
+                    className="flex items-center gap-1.5 px-2 py-1 text-xs bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded border border-purple-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isGeneratingMusic ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="w-3 h-3" />
+                        Generate Music
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowAddAudioDialog(true)}
+                    className="flex items-center gap-1.5 px-2 py-1 text-xs bg-green-600/20 hover:bg-green-600/30 text-green-400 rounded border border-green-500/30 transition-colors"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add Audio
+                  </button>
+                </div>
               </div>
               <div className="relative bg-white/5 rounded-lg border border-white/10 overflow-hidden">
                 <div className="overflow-x-auto overflow-y-hidden custom-scrollbar">
@@ -1453,6 +1708,211 @@ export default function TimelineView() {
                   className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Add Image Clip
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Generate Music Dialog */}
+      {showGenerateMusicDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isGeneratingMusic) {
+              setShowGenerateMusicDialog(false);
+            }
+          }}
+        >
+          <div
+            className="bg-gray-900 border border-white/20 rounded-lg p-6 w-[480px] shadow-2xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Wand2 className="w-5 h-5 text-purple-400" />
+                Generate AI Music
+              </h3>
+              <button
+                onClick={() => !isGeneratingMusic && setShowGenerateMusicDialog(false)}
+                disabled={isGeneratingMusic}
+                className="text-white/60 hover:text-white transition-colors disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Mode Selection */}
+              <div>
+                <label className="block text-sm text-white/80 mb-2">Generation Mode</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setMusicGenerationMode('simple')}
+                    disabled={isGeneratingMusic}
+                    className={`px-3 py-2 text-sm rounded border transition-colors ${
+                      musicGenerationMode === 'simple'
+                        ? 'bg-purple-600/30 border-purple-500 text-purple-300'
+                        : 'bg-white/5 border-white/20 text-white/60 hover:bg-white/10'
+                    }`}
+                  >
+                    Simple
+                  </button>
+                  <button
+                    onClick={() => setMusicGenerationMode('prompt')}
+                    disabled={isGeneratingMusic}
+                    className={`px-3 py-2 text-sm rounded border transition-colors ${
+                      musicGenerationMode === 'prompt'
+                        ? 'bg-purple-600/30 border-purple-500 text-purple-300'
+                        : 'bg-white/5 border-white/20 text-white/60 hover:bg-white/10'
+                    }`}
+                  >
+                    Custom Prompt
+                  </button>
+                  <button
+                    onClick={() => setMusicGenerationMode('video')}
+                    disabled={isGeneratingMusic || !previewVideoUrl}
+                    className={`px-3 py-2 text-sm rounded border transition-colors ${
+                      musicGenerationMode === 'video'
+                        ? 'bg-purple-600/30 border-purple-500 text-purple-300'
+                        : 'bg-white/5 border-white/20 text-white/60 hover:bg-white/10'
+                    } ${!previewVideoUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    title={!previewVideoUrl ? 'Generate videos first to use video analysis' : ''}
+                  >
+                    From Video
+                  </button>
+                </div>
+              </div>
+
+              {/* Simple Mode Options */}
+              {musicGenerationMode === 'simple' && (
+                <>
+                  <div>
+                    <label className="block text-sm text-white/80 mb-2">Mood</label>
+                    <select
+                      value={musicMood}
+                      onChange={(e) => setMusicMood(e.target.value)}
+                      disabled={isGeneratingMusic}
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="cinematic">Cinematic</option>
+                      <option value="upbeat">Upbeat</option>
+                      <option value="dramatic">Dramatic</option>
+                      <option value="calm">Calm</option>
+                      <option value="energetic">Energetic</option>
+                      <option value="mysterious">Mysterious</option>
+                      <option value="epic">Epic</option>
+                      <option value="melancholic">Melancholic</option>
+                      <option value="inspiring">Inspiring</option>
+                      <option value="suspenseful">Suspenseful</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-white/80 mb-2">Genre</label>
+                    <select
+                      value={musicGenre}
+                      onChange={(e) => setMusicGenre(e.target.value)}
+                      disabled={isGeneratingMusic}
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                      <option value="electronic">Electronic</option>
+                      <option value="orchestral">Orchestral</option>
+                      <option value="ambient">Ambient</option>
+                      <option value="rock">Rock</option>
+                      <option value="pop">Pop</option>
+                      <option value="jazz">Jazz</option>
+                      <option value="classical">Classical</option>
+                      <option value="hip-hop">Hip-Hop</option>
+                      <option value="lo-fi">Lo-Fi</option>
+                      <option value="synthwave">Synthwave</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              {/* Custom Prompt Mode */}
+              {musicGenerationMode === 'prompt' && (
+                <div>
+                  <label className="block text-sm text-white/80 mb-2">Music Prompt</label>
+                  <textarea
+                    value={musicPrompt}
+                    onChange={(e) => setMusicPrompt(e.target.value)}
+                    disabled={isGeneratingMusic}
+                    placeholder="Describe the music you want... e.g., 'Epic orchestral music with building crescendo, dramatic strings, and powerful brass section'"
+                    className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-500 min-h-[100px] resize-y"
+                  />
+                </div>
+              )}
+
+              {/* Video Analysis Mode */}
+              {musicGenerationMode === 'video' && (
+                <div className="text-sm text-white/60 bg-blue-500/10 p-3 rounded border border-blue-500/20">
+                  <p className="mb-2 font-semibold text-blue-400">Video Analysis Mode</p>
+                  <p>The AI will analyze your video to detect mood, pacing, and key moments, then generate music that matches your video content.</p>
+                  {!previewVideoUrl && (
+                    <p className="mt-2 text-yellow-400">⚠️ No video available. Generate scene videos first.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Duration */}
+              <div>
+                <label className="block text-sm text-white/80 mb-2">
+                  Duration (seconds) - Max 30s
+                </label>
+                <input
+                  type="number"
+                  min="5"
+                  max="30"
+                  step="1"
+                  value={musicDuration}
+                  onChange={(e) => setMusicDuration(Math.min(30, Math.max(5, parseInt(e.target.value) || 30)))}
+                  disabled={isGeneratingMusic}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <p className="text-xs text-white/40 mt-1">MusicGen supports up to 30 seconds of audio</p>
+              </div>
+
+              {/* Progress indicator */}
+              {isGeneratingMusic && musicGenerationProgress && (
+                <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+                  <span className="text-sm text-purple-300">{musicGenerationProgress}</span>
+                </div>
+              )}
+
+              {/* Info about MusicGen */}
+              <div className="text-xs text-white/50 bg-white/5 p-3 rounded">
+                <p className="font-semibold mb-1">Powered by MusicGen</p>
+                <p>AI-generated music using Meta's MusicGen model. The generated audio will be added to your audio tracks.</p>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setShowGenerateMusicDialog(false)}
+                  disabled={isGeneratingMusic}
+                  className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleGenerateMusic}
+                  disabled={isGeneratingMusic || (musicGenerationMode === 'prompt' && !musicPrompt.trim()) || (musicGenerationMode === 'video' && !previewVideoUrl)}
+                  className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isGeneratingMusic ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-4 h-4" />
+                      Generate Music
+                    </>
+                  )}
                 </button>
               </div>
             </div>

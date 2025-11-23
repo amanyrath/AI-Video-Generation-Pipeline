@@ -346,6 +346,21 @@ export async function pollImageStatus(
 ): Promise<ImageStatusResponse> {
   const { interval = 2000, timeout = 300000, projectId, sceneIndex, prompt, onProgress } = options; // 5 min default timeout
   const startTime = Date.now();
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 3;
+
+  // Helper to check if an error is retryable
+  const isRetryableError = (errorMessage: string): boolean => {
+    const msg = errorMessage.toLowerCase();
+    return msg.includes('director') ||
+           msg.includes('e6716') ||
+           msg.includes('unexpected error') ||
+           msg.includes('network') ||
+           msg.includes('timeout') ||
+           msg.includes('rate limit') ||
+           msg.includes('service unavailable') ||
+           msg.includes('internal server error');
+  };
 
   return new Promise((resolve, reject) => {
     const poll = async () => {
@@ -388,6 +403,9 @@ export async function pollImageStatus(
 
         const status: ImageStatusResponse = await response.json();
 
+        // Reset consecutive errors on successful poll
+        consecutiveErrors = 0;
+
         // Call progress callback
         if (onProgress) {
           onProgress(status);
@@ -400,13 +418,35 @@ export async function pollImageStatus(
         }
 
         if (status.status === 'failed' || status.status === 'canceled') {
-          reject(new Error(status.error || 'Image generation failed'));
+          const errorMsg = status.error || 'Image generation failed';
+
+          // Check if this is a retryable Replicate error (like E6716)
+          if (isRetryableError(errorMsg) && consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+            consecutiveErrors++;
+            console.warn(`[pollImageStatus] Retryable error detected (attempt ${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${errorMsg}`);
+            // Wait a bit longer before retrying on errors
+            setTimeout(poll, interval * 2);
+            return;
+          }
+
+          reject(new Error(errorMsg));
           return;
         }
 
         // Continue polling
         setTimeout(poll, interval);
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+
+        // Check if this is a retryable error
+        if (isRetryableError(errorMsg) && consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+          consecutiveErrors++;
+          console.warn(`[pollImageStatus] Transient error (attempt ${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${errorMsg}`);
+          // Wait a bit longer before retrying
+          setTimeout(poll, interval * 2);
+          return;
+        }
+
         reject(error);
       }
     };
@@ -1000,6 +1040,129 @@ export async function duplicateScene(
   });
 }
 
+// ============================================================================
+// Prompt Enhancement
+// ============================================================================
+
+export interface EnhancePromptOptions {
+  prompt: string;
+  context?: {
+    sceneTitle?: string;
+    sceneSummary?: string;
+    previousPrompt?: string;
+    characterDescription?: string;
+  };
+}
+
+export interface EnhancePromptResponse {
+  success: boolean;
+  data?: {
+    originalPrompt: string;
+    enhancedPrompt: string;
+  };
+  error?: string;
+}
+
+/**
+ * Enhance a video prompt using Claude Sonnet 4.5
+ */
+export async function enhancePrompt(
+  options: EnhancePromptOptions
+): Promise<EnhancePromptResponse> {
+  const url = `${API_BASE_URL}/api/enhance-prompt`;
+  return retryRequest(async () => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(options),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to enhance prompt' }));
+      throw new Error(error.error || 'Failed to enhance prompt');
+    }
+
+    return response.json();
+  }, DEFAULT_RETRY_CONFIG, { method: 'POST', url });
+}
+
+// ============================================================================
+// Music Generation
+// ============================================================================
+
+export interface MusicGenerationOptions {
+  prompt?: string;
+  videoUrl?: string;
+  mood?: string;
+  genre?: string;
+  duration?: number;
+  temperature?: number;
+  modelVersion?: 'stereo-melody-large' | 'stereo-large' | 'melody-large' | 'large';
+  analyzeVideo?: boolean;
+}
+
+export interface MusicGenerationResponse {
+  success: boolean;
+  data?: {
+    predictionId: string;
+    status: string;
+    prompt: string;
+    duration: number;
+    analysis?: any;
+  };
+  error?: string;
+}
+
+export interface MusicStatusResponse {
+  success: boolean;
+  data?: {
+    status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
+    audioUrl?: string;
+    localPath?: string;
+    s3Url?: string;
+    error?: string;
+  };
+  error?: string;
+}
+
+/**
+ * Generate music from a prompt or video analysis
+ */
+export async function generateMusicTrack(
+  options: MusicGenerationOptions
+): Promise<MusicGenerationResponse> {
+  return retryRequest(async () => {
+    const url = options.analyzeVideo
+      ? `${API_BASE_URL}/api/generate-music?analyze=true`
+      : `${API_BASE_URL}/api/generate-music`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        prompt: options.prompt,
+        videoUrl: options.videoUrl,
+        mood: options.mood,
+        genre: options.genre,
+        duration: options.duration,
+        temperature: options.temperature,
+        modelVersion: options.modelVersion,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to generate music' }));
+      throw new Error(error.error || 'Failed to generate music');
+    }
+
+    return response.json();
+  });
+}
+
 /**
  * Get all text overlays for a project
  */
@@ -1095,5 +1258,96 @@ export async function deleteTextOverlay(
       throw new Error(error.error || 'Failed to delete text overlay');
     }
   });
+}
+
+/**
+ * Poll for music generation status
+ */
+export async function pollMusicStatus(
+  predictionId: string,
+  options: {
+    interval?: number;
+    timeout?: number;
+    projectId?: string;
+    onProgress?: (status: MusicStatusResponse) => void;
+  } = {}
+): Promise<MusicStatusResponse> {
+  const { interval = 3000, timeout = 180000, projectId, onProgress } = options;
+  const startTime = Date.now();
+
+  return new Promise((resolve, reject) => {
+    const poll = async () => {
+      try {
+        if (Date.now() - startTime > timeout) {
+          reject(new Error('Music generation timeout'));
+          return;
+        }
+
+        const params = new URLSearchParams();
+        if (projectId) params.set('projectId', projectId);
+        const queryString = params.toString();
+
+        const url = `${API_BASE_URL}/api/generate-music/${predictionId}${queryString ? `?${queryString}` : ''}`;
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch music status');
+        }
+
+        const status: MusicStatusResponse = await response.json();
+
+        if (onProgress) {
+          onProgress(status);
+        }
+
+        if (status.data?.status === 'succeeded') {
+          resolve(status);
+          return;
+        }
+
+        if (status.data?.status === 'failed' || status.data?.status === 'canceled') {
+          reject(new Error(status.data?.error || 'Music generation failed'));
+          return;
+        }
+
+        setTimeout(poll, interval);
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    poll();
+  });
+}
+
+/**
+ * Generate music and wait for completion
+ */
+export async function generateMusicAndWait(
+  options: MusicGenerationOptions & { projectId?: string }
+): Promise<{
+  audioUrl: string;
+  localPath?: string;
+  s3Url?: string;
+}> {
+  const result = await generateMusicTrack(options);
+
+  if (!result.success || !result.data?.predictionId) {
+    throw new Error(result.error || 'Failed to start music generation');
+  }
+
+  const status = await pollMusicStatus(result.data.predictionId, {
+    projectId: options.projectId,
+  });
+
+  if (!status.success || !status.data?.audioUrl) {
+    throw new Error(status.error || 'Music generation failed');
+  }
+
+  return {
+    audioUrl: status.data.audioUrl,
+    localPath: status.data.localPath,
+    s3Url: status.data.s3Url,
+  };
 }
 

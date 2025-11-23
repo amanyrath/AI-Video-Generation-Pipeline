@@ -79,16 +79,20 @@ export default function StyleSelection() {
       setIsGeneratingStoryboard(true);
       console.log('[StyleSelection] Starting background storyboard generation...');
 
+      // Get target duration from URL params (default to 30 if not provided)
+      const targetDuration = parseInt(searchParams.get('targetDuration') || '30', 10);
+      console.log('[StyleSelection] Target duration:', targetDuration);
+
       // Build the full prompt
       const fullPrompt = `${initialPrompt}\n\nVisual style: ${stylePrompt}`;
       console.log('[StyleSelection] Full prompt length:', fullPrompt.length);
 
       // Initialize project first
-      createProject('My Video Project', initialPrompt, 30); // 3 scenes x 10 seconds
+      createProject('My Video Project', initialPrompt, targetDuration);
 
       // Generate storyboard in background
       console.log('[StyleSelection] Calling generateStoryboard API...');
-      const response = await generateStoryboard(fullPrompt, 30);
+      const response = await generateStoryboard(fullPrompt, targetDuration);
       console.log('[StyleSelection] API response received:', { success: response.success, sceneCount: response.scenes?.length });
 
       if (response.success && response.scenes) {

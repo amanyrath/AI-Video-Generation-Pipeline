@@ -738,6 +738,10 @@ export function getUserFriendlyErrorMessage(error: unknown): string {
     return 'Image generation was canceled.';
   }
 
+  if (errorMessage.includes('director') || errorMessage.includes('e6716') || errorMessage.includes('unexpected error')) {
+    return 'Temporary server issue. Retrying automatically...';
+  }
+
   // Default: return original message but make it more user-friendly
   return error.message || 'Failed to generate image. Please try again.';
 }
@@ -808,6 +812,9 @@ export function isRetryableError(error: unknown): boolean {
     'internal server error',
     'polling timeout',
     'download',
+    'director',        // Replicate internal "Director: unexpected error" (E6716)
+    'unexpected error', // Generic unexpected errors from Replicate
+    'e6716',           // Specific Replicate error code
   ];
 
   // Non-retryable errors

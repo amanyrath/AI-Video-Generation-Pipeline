@@ -57,6 +57,18 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
     }
   },
 
+  updateProject: (updates) => {
+    set((state) => {
+      if (!state.project) return state;
+      return {
+        project: {
+          ...state.project,
+          ...updates,
+        },
+      };
+    });
+  },
+
   updateProjectMetadata: async (updates) => {
     const state = get();
     if (!state.project) return;
@@ -73,6 +85,7 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
         if (updates.status !== undefined) updatedProject.status = updates.status;
         if (updates.finalVideoUrl !== undefined) updatedProject.finalVideoUrl = updates.finalVideoUrl;
         if (updates.finalVideoS3Key !== undefined) updatedProject.finalVideoS3Key = updates.finalVideoS3Key;
+        if (updates.targetDuration !== undefined) updatedProject.targetDuration = updates.targetDuration;
         return { project: updatedProject };
       });
 
