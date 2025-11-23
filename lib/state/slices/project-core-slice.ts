@@ -217,6 +217,44 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
     });
   },
 
+  clearReferenceImages: () => {
+    set((state) => {
+      if (!state.project) return state;
+      return {
+        project: {
+          ...state.project,
+          characterReferences: [],
+          referenceImageUrls: [],
+        },
+      };
+    });
+  },
+
+  toggleReferenceImage: (imageUrl) => {
+    set((state) => {
+      if (!state.project) return state;
+      const currentReferences = state.project.referenceImageUrls || [];
+      const isCurrentlySelected = currentReferences.includes(imageUrl);
+
+      let newReferences: string[];
+      if (isCurrentlySelected) {
+        // Remove if already selected (deselect)
+        newReferences = currentReferences.filter(url => url !== imageUrl);
+      } else {
+        // Add if not selected (limit to 3)
+        newReferences = [...currentReferences, imageUrl].slice(0, 3);
+      }
+
+      return {
+        project: {
+          ...state.project,
+          characterReferences: newReferences,
+          referenceImageUrls: newReferences,
+        },
+      };
+    });
+  },
+
   setCharacterDescription: (description) => {
     set((state) => {
       if (!state.project) return state;

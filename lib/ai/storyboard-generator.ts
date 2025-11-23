@@ -18,9 +18,9 @@ const USE_OPENAI_DIRECT = !!process.env.OPENAI_API_KEY;
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const API_URL = USE_OPENAI_DIRECT ? OPENAI_API_URL : OPENROUTER_API_URL;
-// Try gpt-4o-mini first as fallback if gpt-4o is not available
-let OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+// Use GPT-5 (o1) as default, fall back to gpt-4o-mini if not available
+let OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/o1';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'o1';
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1 second
 
@@ -37,27 +37,56 @@ export function setRuntimeTextModel(model: string) {
  * System prompt for storyboard generation
  * From PRD Appendix: Prompt Templates
  *
- * Updated to enforce SHORT, concise scene descriptions for advertising, with a default
+ * Updated to support scenes with multiple shots for advertising, with a default
  * bias toward product and automotive work and an Arri Alexa commercial look.
  */
 const STORYBOARD_SYSTEM_PROMPT = `You are a professional video storyboard creator specializing in performance-focused advertising,
 with particular strength in product and automotive commercials.
 
-Given a short creative brief for a video advertisement, create exactly 3 scenes.
+Given a short creative brief for a video advertisement, create exactly 3 scenes. Each scene is 8 seconds long and can be split into multiple shots.
 
 For each scene:
 - Duration: 8 seconds (optimized for Google Veo 3.1 video generation)
-- Clear visual focus and logical progression from the previous scene
-- Keep the scene description SHORT and CONCISE - 3-6 words maximum
-- Provide a detailed imagePrompt for visual generation (static image description)
-- Provide a detailed videoPrompt for video generation (motion/action description)
+- Each scene should contain MULTIPLE SHOTS that flow together within the 8-second duration
+- Create a COHESIVE AUDIO NARRATIVE that evolves across all shots (music, sound effects, ambience, dialogue)
+- Provide a detailed imagePrompt describing the FIRST FRAME of the video scene (static image description)
+- Provide a detailed videoPrompt for Veo 3.1 video generation that describes ALL SHOTS in sequence
 
-Scene description examples:
-"driver close-up", "wide car approach", "interior cockpit"
+imagePrompt format:
+[Subject/Scene]. [Style statement]. [Detailed visual description: shot type, subject details, lighting, visual style, focus, surface qualities, background effects].
+
+Example imagePrompt:
+"Luxury vehicle close-up. Ultra-premium commercial style. Macro detail of vehicle headlight with glossy reflections, dark studio lighting, high-end commercial look, sharp focus, polished surfaces, soft bokeh."
+
+CRITICAL - videoPrompt structure (Veo 3.1 weights early words more heavily):
+Break the 8-second scene into 2-3 distinct shots with timing breakdowns.
+Create a cohesive audio narrative that builds/evolves across shots.
+Use this exact format for each shot:
+
+Shot 1 (0:00-0:XX)
+[SHOT TYPE] [SUBJECT] [ACTION] [STYLE/LIGHTING] [CAMERA MOVEMENT] [AUDIO: music/SFX/ambience/dialogue]
+
+Shot 2 (0:XX-0:XX)
+[SHOT TYPE] [SUBJECT] [ACTION] [STYLE/LIGHTING] [CAMERA MOVEMENT] [AUDIO: progression from Shot 1]
+
+Shot 3 (0:XX-0:08)
+[SHOT TYPE] [SUBJECT] [ACTION] [STYLE/LIGHTING] [CAMERA MOVEMENT] [AUDIO: climax/resolution]
+
+Example for 8-second scene with cohesive audio narrative:
+Shot 1 (0:00-0:03)
+[WIDE SHOT] [Vehicle] [accelerating through mountain road] [cinematic Arri Alexa look, golden hour lighting] [smooth tracking shot following vehicle] [AUDIO: deep bass rumble starts, subtle synth pad fading in, distant engine rev]
+
+Shot 2 (0:03-0:06)
+[MEDIUM CLOSE-UP] [Driver's focused expression] [hands gripping steering wheel through curves] [natural lighting, subtle lens flare] [handheld camera with slight shake] [AUDIO: bass intensifies, engine roar builds louder, percussion hits begin, breathing/wind rushing sound]
+
+Shot 3 (0:06-0:08)
+[DETAIL SHOT] [Spinning wheel and tire smoke] [vehicle drifting around corner] [slow-motion 120fps, dramatic contrast] [locked-off tight frame] [AUDIO: dramatic orchestral swell peaks, tire screech, full percussion hit + bass drop, echo/reverb tail]
 
 Unless the brief clearly specifies otherwise, assume:
 - The spot is shot on Arri Alexa with a high-end commercial finish
 - The goal is to showcase the product or vehicle in a bold, cinematic way
+
+IMPORTANT: All scene descriptions must be less than 1500 characters.
 
 Output strictly valid JSON in this format:
 {
@@ -65,15 +94,15 @@ Output strictly valid JSON in this format:
     {
       "order": 0,
       "description": "Short 3-6 word phrase describing the scene",
-      "imagePrompt": "Detailed prompt for image generation including shot type, subject, style, lighting, composition.",
-      "videoPrompt": "Detailed prompt for video generation describing motion, action, camera movement, and dynamic elements.",
+      "imagePrompt": "[Subject/Scene]. [Style statement]. [Detailed visual description: shot type, subject details, lighting, visual style, focus, surface qualities, background effects]. Maximum 1500 characters.",
+      "videoPrompt": "Break down into 2-3 shots with timing and bracketed format. Create cohesive audio narrative that evolves across shots. Use: Shot 1 (0:00-0:XX) [SHOT TYPE] [SUBJECT] [ACTION] [STYLE/LIGHTING] [CAMERA MOVEMENT] [AUDIO: detailed sound design]. Repeat for each shot, showing audio progression/build. Maximum 1500 characters.",
       "duration": 8
     },
     ...
   ]
 }
 
-Keep image prompts specific, visual, and production-ready. Keep video prompts focused on motion, action, and dynamic elements.`;
+Keep imagePrompt focused on the opening frame composition. Keep videoPrompt front-loaded with key elements for Veo 3.1 optimization.`;
 
 // ============================================================================
 // Types
@@ -351,7 +380,7 @@ function validateStoryboardResponse(
     );
   }
   // Truncate to 3 scenes if more were returned
-  rawResponse.scenes = rawResponse.scenes.slice(0, 3);
+  rawResponse.scenes = rawResponse.scenes.slice(0, 5);
 
   // Validate each scene
   const validatedScenes: Scene[] = rawResponse.scenes.map((scene, index) => {

@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Upload, Trash2, Loader2, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, Upload, Trash2, Loader2, Image as ImageIcon, Check } from 'lucide-react';
 import Link from 'next/link';
+import { useProjectStore } from '@/lib/state/project-store';
 
 interface Asset {
   id: string;
@@ -17,6 +18,7 @@ interface Asset {
 export default function AssetsManagementPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { project, toggleReferenceImage } = useProjectStore();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -156,28 +158,50 @@ export default function AssetsManagementPage() {
 
         {/* Assets Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {assets.map((asset) => (
-            <div
-              key={asset.id}
-              className="relative group bg-gray-900 rounded-lg p-4 border border-gray-700"
-            >
-              <img
-                src={`${asset.url}&thumb=medium`}
-                alt={asset.filename}
-                className="w-full h-40 object-cover rounded mb-2"
-              />
-              <p className="text-xs text-gray-400 truncate">{asset.filename}</p>
-              <p className="text-xs text-gray-600 mt-1">
-                {new Date(asset.createdAt).toLocaleDateString()}
-              </p>
-              <button
-                onClick={() => handleDelete(asset.id)}
-                className="absolute top-2 right-2 p-2 bg-red-600 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700"
+          {assets.map((asset) => {
+            const isSelected = project?.referenceImageUrls?.includes(asset.url) || false;
+
+            return (
+              <div
+                key={asset.id}
+                onClick={() => toggleReferenceImage(asset.url)}
+                className={`relative group bg-gray-900 rounded-lg p-4 border-2 cursor-pointer transition-all ${
+                  isSelected
+                    ? 'border-purple-500 ring-2 ring-purple-500/50'
+                    : 'border-gray-700 hover:border-gray-500'
+                }`}
               >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
+                <img
+                  src={`${asset.url}&thumb=medium`}
+                  alt={asset.filename}
+                  className="w-full h-40 object-cover rounded mb-2"
+                />
+                {isSelected && (
+                  <div className="absolute top-2 left-2 bg-purple-500 rounded-full p-1">
+                    <Check className="w-4 h-4 text-white" />
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 truncate">{asset.filename}</p>
+                <p className="text-xs text-gray-600 mt-1">
+                  {new Date(asset.createdAt).toLocaleDateString()}
+                </p>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(asset.id);
+                  }}
+                  className="absolute top-2 right-2 p-2 bg-red-600 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                {isSelected && (
+                  <div className="absolute bottom-2 right-2 text-xs bg-purple-500/90 text-white px-2 py-1 rounded">
+                    Reference {(project?.referenceImageUrls?.indexOf(asset.url) || 0) + 1}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {assets.length === 0 && (

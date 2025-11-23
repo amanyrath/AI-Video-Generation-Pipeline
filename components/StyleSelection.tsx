@@ -18,13 +18,13 @@ const STYLE_OPTIONS: StyleOption[] = [
     id: 'whimsical',
     label: 'Whimsical',
     videoPath: '/styles/whimsical.gif',
-    prompt: 'Wes Anderson cinematography with static tripod shots flat horizon line, retro 1960s gas station, vintage car commercial aesthetic, pastel color palette with burnt orange and seafoam green, film grain texture, shallow focus on car, deliberate staging, whimsical yet melancholic mood, golden hour lighting, desert landscape, methodical camera movement',
+    prompt: 'Wes Anderson cinematography with static tripod shots flat horizon line, vintage car commercial aesthetic, pastel color palette with burnt orange and seafoam green, film grain texture, shallow focus on car, deliberate staging, whimsical yet melancholic mood, methodical structured camera movement each shot should be a little hazy and vintage',
   },
   {
     id: 'luxury',
     label: 'Luxury',
     videoPath: '/styles/luxury.gif',
-    prompt: 'Cinematic luxury car commercial, beautifully lit car driving through empty desert highway at golden hour, slow tracking shot following the vehicle, dramatic side lighting highlighting reflective paint, shallow depth of field, 2.35:1 aspect ratio, high-end production quality, smooth camera movement. Elegant, powerful, sophisticated, and refined',
+    prompt: 'Cinematic luxury car commercial, beautifully lit car, high-end production quality, smooth camera movement. Elegant, powerful, sophisticated, and refined. dark and moody. Highlighting the beauty and elegance of the car body.',
   },
   {
     id: 'offroad',

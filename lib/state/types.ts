@@ -36,6 +36,8 @@ export interface ProjectCoreSlice {
   // Character reference management
   setCharacterReferences: (imageUrls: string[]) => void;
   addCharacterReference: (imageUrl: string) => void;
+  clearReferenceImages: () => void;
+  toggleReferenceImage: (imageUrl: string) => void;
   setCharacterDescription: (description: string) => void;
   setNeedsCharacterValidation: (needs: boolean) => void;
   setHasUploadedImages: (has: boolean) => void;

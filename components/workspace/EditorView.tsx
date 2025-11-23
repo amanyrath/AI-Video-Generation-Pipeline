@@ -50,9 +50,9 @@ interface GeneratingImage {
 }
 
 export default function EditorView() {
-  const { 
-    project, 
-    currentSceneIndex, 
+  const {
+    project,
+    currentSceneIndex,
   } = useProjectStore();
 
   const {
@@ -98,6 +98,8 @@ export default function EditorView() {
   const [seedImageId, setSeedImageId] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
   const videoGenerationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const imageGenerationRequestIdRef = useRef<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleDuplicateScene = async () => {
     if (!project || isDuplicating) return;
@@ -221,14 +223,31 @@ export default function EditorView() {
   const handleGenerateImage = async () => {
     if (!project?.id) return;
 
+    // Prevent race conditions: Cancel any existing image generation requests
+    if (isGeneratingImage) {
+      console.log('[EditorView] Cancelling previous image generation request');
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    }
+
+    // Generate unique request ID to track this generation batch
+    const requestId = `img-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    imageGenerationRequestIdRef.current = requestId;
+    console.log(`[EditorView] Starting image generation batch: ${requestId}`);
+
+    // Create new AbortController for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     setIsGeneratingImage(true);
     setGeneratingImages([]);
-    
+
     // Check for selected image BEFORE clearing it (for use as seed)
-    const currentSelectedImageBeforeClear = selectedImage || (sceneState?.selectedImageId 
+    const currentSelectedImageBeforeClear = selectedImage || (sceneState?.selectedImageId
       ? sceneImages.find((img: GeneratedImage) => img.id === sceneState.selectedImageId)
       : null);
-    
+
     // Only clear selectedImageId if we're not using it as seed
     const preserveSelection = currentSelectedImageBeforeClear && currentSelectedImageBeforeClear.localPath;
     if (!preserveSelection) {
@@ -335,7 +354,7 @@ export default function EditorView() {
           }
           setSeedImageId(null); // Custom images aren't from the grid, so no image ID to highlight
           console.log(`[EditorView] Scene ${currentSceneIndex}: Using custom image input as seed image:`, seedImageUrl.substring(0, 80) + '...');
-          
+
           // Add all custom images to reference images for IP-Adapter
           const customImageUrls = customImageInputs.map(url => {
             if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('/api')) {
@@ -375,6 +394,12 @@ export default function EditorView() {
       // Generate 3 images in parallel
       const imagePromises = Array(3).fill(null).map(async (_, index) => {
         try {
+          // Check if request was cancelled before starting
+          if (abortController.signal.aborted) {
+            console.log(`[EditorView] Image ${index + 1} generation cancelled (before start)`);
+            return;
+          }
+
           // Create prediction
           // Strategy: Use seed frame as seed image for image-to-image generation
           // For Scene 0: Use reference image as seed image if available
@@ -389,20 +414,28 @@ export default function EditorView() {
             negativePrompt: editedNegativePrompt || currentScene.negativePrompt, // Optional negative prompt
           });
 
+          // Check if this request was cancelled or superseded
+          if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+            console.log(`[EditorView] Image ${index + 1} generation cancelled (after API call, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
+            return;
+          }
+
           // Check if predictionId exists
           if (!response.predictionId) {
             throw new Error('Failed to get prediction ID from image generation response');
           }
 
-          // Update generating state
-          setGeneratingImages(prev => {
-            const updated = [...prev];
-            updated[index] = {
-              predictionId: response.predictionId || '',
-              status: response.status || 'starting',
-            };
-            return updated;
-          });
+          // Update generating state only if not cancelled
+          if (!abortController.signal.aborted && imageGenerationRequestIdRef.current === requestId) {
+            setGeneratingImages(prev => {
+              const updated = [...prev];
+              updated[index] = {
+                predictionId: response.predictionId || '',
+                status: response.status || 'starting',
+              };
+              return updated;
+            });
+          }
 
           // Poll for completion
           const statusResponse = await pollImageStatus(
@@ -413,17 +446,26 @@ export default function EditorView() {
               sceneIndex: currentSceneIndex,
               prompt: editedPrompt || currentScene.imagePrompt,
               onProgress: (status) => {
-                setGeneratingImages(prev => {
-                  const updated = [...prev];
-                  updated[index] = {
-                    ...updated[index],
-                    status: status.status === 'canceled' ? 'failed' : status.status,
-                  };
-                  return updated;
-                });
+                // Only update if not cancelled and still the current request
+                if (!abortController.signal.aborted && imageGenerationRequestIdRef.current === requestId) {
+                  setGeneratingImages(prev => {
+                    const updated = [...prev];
+                    updated[index] = {
+                      ...updated[index],
+                      status: status.status === 'canceled' ? 'failed' : status.status,
+                    };
+                    return updated;
+                  });
+                }
               },
             }
           );
+
+          // Final check before updating state with results
+          if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+            console.log(`[EditorView] Image ${index + 1} generation cancelled (after polling, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
+            return;
+          }
 
           if (statusResponse.status === 'succeeded' && statusResponse.image) {
             // Add image to store
@@ -452,7 +494,13 @@ export default function EditorView() {
             throw new Error(statusResponse.error || 'Image generation failed');
           }
         } catch (error) {
-          console.error(`Failed to generate image ${index + 1}:`, error);
+          // Don't log errors for aborted requests
+          if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+            console.log(`[EditorView] Image ${index + 1} generation aborted`);
+            return;
+          }
+
+          console.error(`[EditorView] Failed to generate image ${index + 1}:`, error);
           setGeneratingImages(prev => {
             const updated = [...prev];
             updated[index] = {
@@ -465,11 +513,25 @@ export default function EditorView() {
       });
 
       await Promise.all(imagePromises);
-      setSceneStatus(currentSceneIndex, 'image_ready');
+
+      // Only update status if this request wasn't cancelled
+      if (!abortController.signal.aborted && imageGenerationRequestIdRef.current === requestId) {
+        setSceneStatus(currentSceneIndex, 'image_ready');
+        console.log(`[EditorView] Image generation batch ${requestId} completed successfully`);
+      } else {
+        console.log(`[EditorView] Image generation batch ${requestId} was cancelled or superseded`);
+      }
     } catch (error) {
-      console.error('Error generating images:', error);
+      // Don't log errors for aborted requests
+      if (!abortController.signal.aborted && imageGenerationRequestIdRef.current === requestId) {
+        console.error('[EditorView] Error generating images:', error);
+      }
     } finally {
-      setIsGeneratingImage(false);
+      // Only clear loading state if this is still the current request
+      if (imageGenerationRequestIdRef.current === requestId) {
+        setIsGeneratingImage(false);
+        abortControllerRef.current = null;
+      }
     }
   };
 
@@ -744,6 +806,19 @@ export default function EditorView() {
     };
   }, []);
 
+  // Cleanup image generation on unmount or scene change
+  useEffect(() => {
+    return () => {
+      // Cancel any ongoing image generation when component unmounts or scene changes
+      if (abortControllerRef.current) {
+        console.log('[EditorView] Cancelling image generation on unmount/scene change');
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      imageGenerationRequestIdRef.current = null;
+    };
+  }, [currentSceneIndex]);
+
   const handleRegenerateImage = async () => {
     // Regenerate - selected image will be used as seed if available
     await handleGenerateImage();
@@ -966,18 +1041,11 @@ export default function EditorView() {
   };
 
   // Handle media drop from media drawer
-  const handleMediaDropOnImageInput = (itemId: string, itemType: 'image' | 'video' | 'frame') => {
-    console.log('[EditorView] Media dropped:', { itemId, itemType });
+  const handleMediaDropOnImageInput = (itemId: string, itemType: 'image' | 'video' | 'frame', targetSlot?: number) => {
+    console.log('[EditorView] Media dropped:', { itemId, itemType, targetSlot });
 
     if (itemType === 'video') {
       alert('Videos cannot be used as image input. Please use an image or frame.');
-      return;
-    }
-
-    // Check if we've reached the limit (4 slots: 1 seed + 3 reference)
-    const filledSlots = customImagePreviews.filter(p => p !== null && p !== undefined).length;
-    if (filledSlots >= 4) {
-      alert('You can only add up to 4 images (1 seed + 3 reference).');
       return;
     }
 
@@ -997,81 +1065,93 @@ export default function EditorView() {
 
       console.log('[EditorView] Preview URL:', previewUrl);
 
-      // Find first empty slot
       const newPreviews = [...customImagePreviews];
-      for (let i = 0; i < 4; i++) {
+
+      // If a target slot is specified, use it
+      if (targetSlot !== undefined && targetSlot >= 0 && targetSlot <= 4) {
+        // Replace the slot (overwrite existing if present)
+        newPreviews[targetSlot] = { url: previewUrl, source: 'media' };
+        console.log('[EditorView] Set preview in target slot', targetSlot, newPreviews[targetSlot]);
+        setCustomImagePreviews(newPreviews);
+        return;
+      }
+
+      // Otherwise, find first empty slot (original behavior)
+      for (let i = 0; i < 5; i++) {
         if (!newPreviews[i]) {
           newPreviews[i] = { url: previewUrl, source: 'media' };
-          console.log('[EditorView] Set preview in slot', i, newPreviews[i]);
+          console.log('[EditorView] Set preview in first empty slot', i, newPreviews[i]);
           setCustomImagePreviews(newPreviews);
           return;
         }
       }
 
-      // If all slots are filled (shouldn't reach here due to check above)
-      alert('All image slots are filled. Remove an image first.');
+      // If all slots are filled, inform user
+      alert('All image slots are filled. Remove an image first or drop on a specific slot to replace it.');
     } else {
       console.error('[EditorView] Could not find image with ID:', itemId);
       alert('Could not find the dropped image. Please try again.');
     }
   };
 
-  // Handle file drop from computer
-  const handleFileDrop = (e: React.DragEvent) => {
+  // Set up drag and drop for image input area (from media drawer)
+  const { handleDragOver: handleMediaDragOver, handleDragLeave: handleMediaDragLeave, isOverDropZone } = useMediaDragDrop({
+    onDrop: (itemId, itemType) => handleMediaDropOnImageInput(itemId, itemType),
+    acceptedTypes: ['image', 'frame'],
+  });
+
+  // Create slot-specific drop handlers
+  const createSlotDropHandler = (slotIndex: number) => (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
-    if (files.length === 0) {
-      return;
-    }
+    // Check if it's a file drop (has files)
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      // Handle file drop (from computer)
+      const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
+      if (files.length === 0) return;
 
-    // Check if adding these files would exceed the limit (4 slots)
-    const currentCount = customImagePreviews.filter(p => p !== null && p !== undefined).length;
-    if (currentCount + files.length > 4) {
-      alert(`You can only add up to 4 images (1 seed + 3 reference). Currently have ${currentCount}, trying to add ${files.length}.`);
-      return;
-    }
-
-    const validFiles: File[] = [];
-    const previews: Array<{ url: string; source: 'file' }> = [];
-
-    files.forEach(file => {
-      // Validate file size (max 10MB)
+      const file = files[0]; // Only take first file for single slot drop
       if (file.size > 10 * 1024 * 1024) {
-        alert(`${file.name} is too large (max 10MB). Skipping.`);
+        alert(`${file.name} is too large (max 10MB).`);
         return;
       }
-      validFiles.push(file);
-      // Create preview URL
-      const previewUrl = URL.createObjectURL(file);
-      previews.push({ url: previewUrl, source: 'file' });
-    });
 
-    if (validFiles.length > 0) {
-      // Find empty slots and fill them
+      const previewUrl = URL.createObjectURL(file);
       const newPreviews = [...customImagePreviews];
       const newFiles = [...customImageFiles];
 
-      let fileIdx = 0;
-      for (let slotIdx = 0; slotIdx < 4 && fileIdx < validFiles.length; slotIdx++) {
-        if (!newPreviews[slotIdx]) {
-          newPreviews[slotIdx] = previews[fileIdx];
-          newFiles.push(validFiles[fileIdx]);
-          fileIdx++;
+      // Calculate file index for this slot
+      let fileIndex = 0;
+      for (let i = 0; i < slotIndex; i++) {
+        if (customImagePreviews[i]?.source === 'file') {
+          fileIndex++;
         }
       }
 
+      // Replace the slot
+      newPreviews[slotIndex] = { url: previewUrl, source: 'file' };
+      newFiles.splice(fileIndex, 0, file);
+
       setCustomImagePreviews(newPreviews);
       setCustomImageFiles(newFiles);
+    } else {
+      // Handle media drawer drop
+      const data = e.dataTransfer.getData('application/json');
+      if (data) {
+        const { itemId, itemType } = JSON.parse(data);
+        if (itemId && itemType) {
+          handleMediaDropOnImageInput(itemId, itemType, slotIndex);
+        }
+      } else {
+        // Fallback: try to get from global drag state
+        const { dragDrop } = useProjectStore.getState();
+        if (dragDrop.draggedItemId && dragDrop.draggedItemType) {
+          handleMediaDropOnImageInput(dragDrop.draggedItemId, dragDrop.draggedItemType, slotIndex);
+        }
+      }
     }
   };
-
-  // Set up drag and drop for image input area (from media drawer)
-  const { handleDragOver: handleMediaDragOver, handleDragLeave: handleMediaDragLeave, handleDrop: handleMediaDrop, isOverDropZone } = useMediaDragDrop({
-    onDrop: handleMediaDropOnImageInput,
-    acceptedTypes: ['image', 'frame'],
-  });
 
   // Handle drag over for file drops
   const handleFileDragOver = (e: React.DragEvent) => {
@@ -1087,20 +1167,6 @@ export default function EditorView() {
     e.stopPropagation();
     // Also handle media drawer drag leave
     handleMediaDragLeave();
-  };
-
-  // Handle drop (both files and media drawer)
-  const handleDropZone = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Check if it's a file drop (has files)
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileDrop(e);
-    } else {
-      // Otherwise, try media drawer drop
-      handleMediaDrop(e);
-    }
   };
 
   // Auto-save function with debouncing
@@ -1495,11 +1561,11 @@ export default function EditorView() {
                         <label
                           onDragOver={handleFileDragOver}
                           onDragLeave={handleFileDragLeave}
-                          onDrop={handleDropZone}
+                          onDrop={createSlotDropHandler(slotIndex)}
                           className={`block w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
                             isOverDropZone
-                              ? 'border-blue-400 bg-blue-500/10'
-                              : 'border-blue-400/40 hover:border-blue-400/60 bg-blue-500/5'
+                              ? 'border-white/40 bg-white/10'
+                              : 'border-white/20 hover:border-white/30 bg-white/5'
                           }`}
                         >
                           {preview ? (
@@ -1524,8 +1590,8 @@ export default function EditorView() {
                             </>
                           ) : (
                             <div className="w-full h-full flex flex-col items-center justify-center p-2">
-                              <Upload className="w-6 h-6 text-blue-400/50 mb-1" />
-                              <span className="text-xs text-blue-400/70 text-center">Drop or click to upload</span>
+                              <Upload className="w-6 h-6 text-white/30 mb-1" />
+                              <span className="text-xs text-white/40 text-center">Drop or click to upload</span>
                             </div>
                           )}
                           <input
@@ -1574,7 +1640,7 @@ export default function EditorView() {
                         <label
                           onDragOver={handleFileDragOver}
                           onDragLeave={handleFileDragLeave}
-                          onDrop={handleDropZone}
+                          onDrop={createSlotDropHandler(slotIndex)}
                           className={`block w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
                             isOverDropZone
                               ? 'border-white/40 bg-white/10'
@@ -1659,11 +1725,11 @@ export default function EditorView() {
                         <label
                           onDragOver={handleFileDragOver}
                           onDragLeave={handleFileDragLeave}
-                          onDrop={handleDropZone}
+                          onDrop={createSlotDropHandler(slotIndex)}
                           className={`block w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
                             isOverDropZone
-                              ? 'border-purple-400 bg-purple-500/10'
-                              : 'border-purple-400/40 hover:border-purple-400/60 bg-purple-500/5'
+                              ? 'border-white/40 bg-white/10'
+                              : 'border-white/20 hover:border-white/30 bg-white/5'
                           }`}
                         >
                           {preview ? (
@@ -1688,8 +1754,8 @@ export default function EditorView() {
                             </>
                           ) : (
                             <div className="w-full h-full flex flex-col items-center justify-center p-2">
-                              <Upload className="w-6 h-6 text-purple-400/50 mb-1" />
-                              <span className="text-xs text-purple-400/70 text-center">Last frame</span>
+                              <Upload className="w-6 h-6 text-white/30 mb-1" />
+                              <span className="text-xs text-white/40 text-center">Last frame</span>
                             </div>
                           )}
                           <input
@@ -1738,7 +1804,11 @@ export default function EditorView() {
             <button
               onClick={handleGenerateVideo}
               disabled={isGeneratingVideo}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-blue-500"
+              className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-colors border ${
+                isGeneratingVideo
+                  ? 'bg-white/10 text-white/40 border-white/20 opacity-50 cursor-not-allowed'
+                  : 'bg-white text-black hover:bg-white/90 border-white/20'
+              }`}
             >
               {isGeneratingVideo ? (
                 <>

@@ -53,6 +53,8 @@ export default function SceneCard({
     sceneIndex < SCENE_CONSTANTS.INITIAL_VISIBLE_CARDS
   );
   const cardRef = useRef<HTMLDivElement>(null);
+  const imageGenerationRequestIdRef = useRef<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Intersection observer for lazy loading thumbnail
   useEffect(() => {
@@ -82,6 +84,19 @@ export default function SceneCard({
       observer.disconnect();
     };
   }, [isVisible]);
+
+  // Cleanup image generation on unmount
+  useEffect(() => {
+    return () => {
+      // Cancel any ongoing image generation when component unmounts
+      if (abortControllerRef.current) {
+        console.log(`[SceneCard] Scene ${sceneIndex}: Cancelling image generation on unmount`);
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      imageGenerationRequestIdRef.current = null;
+    };
+  }, [sceneIndex]);
 
   const handleClick = () => {
     if (onClick) {
@@ -153,7 +168,24 @@ export default function SceneCard({
 
   const handleGenerateImage = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!project || isGenerating) return;
+    if (!project) return;
+
+    // Prevent race conditions: Cancel any existing image generation requests
+    if (isGenerating) {
+      console.log(`[SceneCard] Scene ${sceneIndex}: Cancelling previous image generation request`);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    }
+
+    // Generate unique request ID to track this generation
+    const requestId = `scene${sceneIndex}-img-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    imageGenerationRequestIdRef.current = requestId;
+    console.log(`[SceneCard] Scene ${sceneIndex}: Starting image generation: ${requestId}`);
+
+    // Create new AbortController for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     setIsGenerating(true);
     try {
@@ -337,8 +369,20 @@ export default function SceneCard({
         promptAdjustmentMode, // Prompt adjustment mode from runtime config
       };
 
+      // Check if request was cancelled before API call
+      if (abortController.signal.aborted) {
+        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation cancelled (before API call)`);
+        return;
+      }
+
       const response = await generateImage(request);
-      
+
+      // Check if this request was cancelled or superseded
+      if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation cancelled (after API call, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
+        return;
+      }
+
       if (!response.success || !response.predictionId) {
         throw new Error(response.error || 'Failed to start image generation');
       }
@@ -351,6 +395,12 @@ export default function SceneCard({
         prompt: scene.imagePrompt,
       });
 
+      // Final check before updating state with results
+      if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation cancelled (after polling, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
+        return;
+      }
+
       if (status.success && status.image) {
         addGeneratedImage(sceneIndex, status.image);
         if (!scenes[sceneIndex]?.selectedImageId) {
@@ -361,10 +411,17 @@ export default function SceneCard({
           content: `✓ Image generated for Scene ${sceneIndex + 1}`,
           type: 'status',
         });
+        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation ${requestId} completed successfully`);
       } else {
         throw new Error(status.error || 'Image generation failed');
       }
     } catch (err) {
+      // Don't log errors for aborted requests
+      if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation aborted`);
+        return;
+      }
+
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate image';
       setSceneStatus(sceneIndex, 'pending');
       addChatMessage({
@@ -373,7 +430,11 @@ export default function SceneCard({
         type: 'error',
       });
     } finally {
-      setIsGenerating(false);
+      // Only clear loading state if this is still the current request
+      if (imageGenerationRequestIdRef.current === requestId) {
+        setIsGenerating(false);
+        abortControllerRef.current = null;
+      }
     }
   };
 
