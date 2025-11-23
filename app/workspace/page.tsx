@@ -20,12 +20,6 @@ function WorkspaceContent() {
   const projectId = searchParams.get('projectId');
   const autoGenerate = searchParams.get('autoGenerate') === 'true';
   const { project, loadProject } = useProjectStore();
-
-  console.log('[Workspace] URL params:', {
-    projectId,
-    autoGenerate,
-    hasProject: !!project,
-  });
   // On mobile, panels start collapsed; on desktop, media drawer starts expanded, agent starts collapsed
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);

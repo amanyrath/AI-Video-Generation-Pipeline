@@ -1,7 +1,7 @@
 import { StateCreator } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { ProjectStore, TimelineSlice } from '../types';
-import { TimelineClip, GeneratedVideo, AudioTrack, ImageTrack, TextOverlay } from '@/lib/types';
+import { TimelineClip, GeneratedVideo, AudioTrack, ImageTrack, TextOverlay, NarrationTrack, NarrationVoice } from '@/lib/types';
 
 export const createTimelineSlice: StateCreator<ProjectStore, [], [], TimelineSlice> = (set, get) => ({
   timelineClips: [],
@@ -410,6 +410,60 @@ export const createTimelineSlice: StateCreator<ProjectStore, [], [], TimelineSli
 
   setSelectedImageTrackId: (trackId) => {
     set({ selectedImageTrackId: trackId });
+  },
+
+  // Narration track management
+  narrationTracks: [],
+  selectedNarrationTrackId: null,
+
+  addNarrationTrack: (audioUrl, text, voice, duration, title = 'Narration', speed = 1.0) => {
+    set((state) => {
+      const newTrack: NarrationTrack = {
+        id: uuidv4(),
+        title,
+        text,
+        audioUrl,
+        audioLocalPath: audioUrl,
+        startTime: 0,
+        duration,
+        volume: 100,
+        voice,
+        speed,
+        endTime: duration,
+        sourceDuration: duration,
+      };
+
+      return {
+        narrationTracks: [...state.narrationTracks, newTrack],
+      };
+    });
+  },
+
+  deleteNarrationTrack: (trackId) => {
+    set((state) => ({
+      narrationTracks: state.narrationTracks.filter(t => t.id !== trackId),
+      selectedNarrationTrackId: state.selectedNarrationTrackId === trackId ? null : state.selectedNarrationTrackId,
+    }));
+  },
+
+  updateNarrationTrack: (trackId, updates) => {
+    set((state) => ({
+      narrationTracks: state.narrationTracks.map(track => {
+        if (track.id === trackId) {
+          const updatedTrack = { ...track, ...updates };
+          // Recalculate endTime if startTime or duration changed
+          if (updates.startTime !== undefined || updates.duration !== undefined) {
+            updatedTrack.endTime = updatedTrack.startTime + updatedTrack.duration;
+          }
+          return updatedTrack;
+        }
+        return track;
+      }),
+    }));
+  },
+
+  setSelectedNarrationTrackId: (trackId) => {
+    set({ selectedNarrationTrackId: trackId });
   },
 
   // Text overlay management

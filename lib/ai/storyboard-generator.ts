@@ -75,6 +75,7 @@ Output strictly valid JSON in this format:
 }
 
 Keep imagePrompt focused on the opening frame composition. Keep videoPrompt front-loaded with key elements for Veo 3.1 optimization.`;
+}
 
 // ============================================================================
 // Types

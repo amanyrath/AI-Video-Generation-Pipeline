@@ -357,6 +357,16 @@ export default function SceneCard({
       const runtimeConfig = getRuntimeConfig();
       const promptAdjustmentMode = runtimeConfig.promptAdjustmentMode || 'scene-specific';
 
+      // Helper to check if error is retryable (Replicate transient errors)
+      const isRetryableError = (error: Error): boolean => {
+        const msg = error.message.toLowerCase();
+        return msg.includes('director') ||
+               msg.includes('e6716') ||
+               msg.includes('unexpected error') ||
+               msg.includes('temporary server') ||
+               msg.includes('internal server error');
+      };
+
       // Generate 1 image (storyboard page generates 1, editor page generates 5)
       const request: ImageGenerationRequest = {
         prompt: scene.imagePrompt,
@@ -375,46 +385,86 @@ export default function SceneCard({
         return;
       }
 
-      const response = await generateImage(request);
+      const MAX_RETRIES = 2;
+      let lastError: Error | null = null;
 
-      // Check if this request was cancelled or superseded
-      if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
-        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation cancelled (after API call, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
-        return;
-      }
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            console.log(`[SceneCard] Retrying image generation for Scene ${sceneIndex + 1} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+            addChatMessage({
+              role: 'agent',
+              content: `Retrying image generation for Scene ${sceneIndex + 1}...`,
+              type: 'status',
+            });
+            // Brief delay before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
 
-      if (!response.success || !response.predictionId) {
-        throw new Error(response.error || 'Failed to start image generation');
-      }
+          const response = await generateImage(request);
 
-      const status = await pollImageStatus(response.predictionId, {
-        interval: SCENE_CONSTANTS.IMAGE_POLL_INTERVAL,
-        timeout: SCENE_CONSTANTS.IMAGE_GENERATION_TIMEOUT,
-        projectId: project.id,
-        sceneIndex,
-        prompt: scene.imagePrompt,
-      });
+          // Check if this request was cancelled or superseded
+          if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+            console.log(`[SceneCard] Scene ${sceneIndex}: Image generation cancelled (after API call, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
+            return;
+          }
 
-      // Final check before updating state with results
-      if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
-        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation cancelled (after polling, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
-        return;
-      }
+          if (!response.success || !response.predictionId) {
+            throw new Error(response.error || 'Failed to start image generation');
+          }
 
-      if (status.success && status.image) {
-        addGeneratedImage(sceneIndex, status.image);
-        if (!scenes[sceneIndex]?.selectedImageId) {
-          selectImage(sceneIndex, status.image.id);
+          const status = await pollImageStatus(response.predictionId, {
+            interval: SCENE_CONSTANTS.IMAGE_POLL_INTERVAL,
+            timeout: SCENE_CONSTANTS.IMAGE_GENERATION_TIMEOUT,
+            projectId: project.id,
+            sceneIndex,
+            prompt: scene.imagePrompt,
+          });
+
+          // Final check before updating state with results
+          if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
+            console.log(`[SceneCard] Scene ${sceneIndex}: Image generation cancelled (after polling, current: ${imageGenerationRequestIdRef.current}, this: ${requestId})`);
+            return;
+          }
+
+          if (status.success && status.image) {
+            addGeneratedImage(sceneIndex, status.image);
+            if (!scenes[sceneIndex]?.selectedImageId) {
+              selectImage(sceneIndex, status.image.id);
+            }
+            addChatMessage({
+              role: 'agent',
+              content: `✓ Image generated for Scene ${sceneIndex + 1}`,
+              type: 'status',
+            });
+            console.log(`[SceneCard] Scene ${sceneIndex}: Image generation ${requestId} completed successfully`);
+            // Success - exit retry loop
+            return;
+          } else {
+            throw new Error(status.error || 'Image generation failed');
+          }
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+
+          // Check if we should retry
+          if (attempt < MAX_RETRIES && isRetryableError(lastError)) {
+            console.warn(`[SceneCard] Retryable error for Scene ${sceneIndex + 1}: ${lastError.message}`);
+            continue; // Try again
+          }
+
+          // No more retries or non-retryable error - break out to error handling
+          break;
         }
-        addChatMessage({
-          role: 'agent',
-          content: `✓ Image generated for Scene ${sceneIndex + 1}`,
-          type: 'status',
-        });
-        console.log(`[SceneCard] Scene ${sceneIndex}: Image generation ${requestId} completed successfully`);
-      } else {
-        throw new Error(status.error || 'Image generation failed');
       }
+
+      // If we get here, all retries failed
+      const errorMessage = lastError?.message || 'Failed to generate image';
+      setSceneStatus(sceneIndex, 'pending');
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Error: ${errorMessage}`,
+        type: 'error',
+      });
     } catch (err) {
       // Don't log errors for aborted requests
       if (abortController.signal.aborted || imageGenerationRequestIdRef.current !== requestId) {
