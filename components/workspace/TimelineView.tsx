@@ -42,6 +42,7 @@ export default function TimelineView() {
   } = useProjectStore();
 
   const [isStitching, setIsStitching] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1); // 1 = normal, >1 = zoomed in, <1 = zoomed out
@@ -513,15 +514,50 @@ export default function TimelineView() {
     }
   };
 
-  const handleDownload = () => {
-    if (!project.finalVideoUrl) return;
+  const handleDownload = async () => {
+    if (!project.finalVideoUrl || isDownloading) return;
 
-    const link = document.createElement('a');
-    link.href = project.finalVideoUrl;
-    link.download = `video-${project.id}.mp4`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    setIsDownloading(true);
+    try {
+      addChatMessage({
+        role: 'agent',
+        content: 'Starting video download...',
+        type: 'status',
+      });
+
+      // Check if URL is still valid before downloading
+      try {
+        const response = await fetch(project.finalVideoUrl, { method: 'HEAD' });
+        if (!response.ok) {
+          throw new Error('Video URL has expired or is no longer available');
+        }
+      } catch (err) {
+        throw new Error('Failed to access video. The download link may have expired. Please re-stitch the video.');
+      }
+
+      const link = document.createElement('a');
+      link.href = project.finalVideoUrl;
+      link.download = `video-${project.id}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      addChatMessage({
+        role: 'agent',
+        content: '✓ Video download started successfully',
+        type: 'status',
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to download video';
+      setError(errorMessage);
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Download failed: ${errorMessage}`,
+        type: 'error',
+      });
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const handleRefreshClips = () => {
@@ -1134,10 +1170,20 @@ export default function TimelineView() {
                   <h4 className="text-sm font-semibold text-white">Final Video</h4>
                   <button
                     onClick={handleDownload}
-                    className="flex items-center gap-2 px-4 py-2 text-sm bg-white/10 text-white rounded-lg hover:bg-white/20 transition-colors border border-white/10"
+                    disabled={isDownloading}
+                    className="flex items-center gap-2 px-4 py-2 text-sm bg-white/10 text-white rounded-lg hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors border border-white/10"
                   >
-                    <Download className="w-4 h-4" />
-                    Download MP4
+                    {isDownloading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Downloading...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        Download MP4
+                      </>
+                    )}
                   </button>
                 </div>
                 <VideoPlayer

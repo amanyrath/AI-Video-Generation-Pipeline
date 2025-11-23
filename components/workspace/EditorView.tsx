@@ -98,6 +98,7 @@ export default function EditorView() {
   const [enlargedSeedFrameUrl, setEnlargedSeedFrameUrl] = useState<string | null>(null);
   const [seedImageId, setSeedImageId] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const videoGenerationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleDuplicateScene = async () => {
     if (!project || isDuplicating) return;
@@ -496,9 +497,21 @@ export default function EditorView() {
   };
 
   const handleGenerateVideo = async () => {
-    if (!project?.id) return;
+    if (!project?.id || isGeneratingVideo) return;
+
+    // Debounce rapid clicks - prevent multiple requests within 2 seconds
+    if (videoGenerationTimeoutRef.current) {
+      console.log('[EditorView] Video generation request ignored - debouncing active');
+      return;
+    }
 
     setIsGeneratingVideo(true);
+
+    // Set debounce timeout to prevent rapid re-clicks
+    videoGenerationTimeoutRef.current = setTimeout(() => {
+      videoGenerationTimeoutRef.current = null;
+    }, 2000);
+
     try {
       setSceneStatus(currentSceneIndex, 'generating_video');
 
@@ -714,11 +727,25 @@ export default function EditorView() {
       }
     } catch (error) {
       console.error('Error generating video:', error);
-      alert('Failed to generate video: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Failed to generate video: ${errorMessage}`,
+        type: 'error',
+      });
     } finally {
       setIsGeneratingVideo(false);
     }
   };
+
+  // Cleanup video generation timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (videoGenerationTimeoutRef.current) {
+        clearTimeout(videoGenerationTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleRegenerateImage = async () => {
     // Regenerate - selected image will be used as seed if available

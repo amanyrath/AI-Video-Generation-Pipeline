@@ -71,6 +71,7 @@ export default function MediaGenerationView() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [seedImageId, setSeedImageId] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const imageGenerationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleDuplicateScene = async () => {
     if (!project || isDuplicating) return;
@@ -158,10 +159,21 @@ export default function MediaGenerationView() {
   }, [currentSceneIndex, currentScene?.imagePrompt, currentScene?.videoPrompt, currentScene?.negativePrompt, currentScene?.customDuration, currentScene?.customImageInput]);
 
   const handleGenerateImage = async () => {
-    if (!project?.id) return;
+    if (!project?.id || isGeneratingImage) return;
+
+    // Debounce rapid clicks - prevent multiple requests within 2 seconds
+    if (imageGenerationTimeoutRef.current) {
+      console.log('[MediaGenerationView] Image generation request ignored - debouncing active');
+      return;
+    }
 
     setIsGeneratingImage(true);
     setGeneratingImages([]);
+
+    // Set debounce timeout to prevent rapid re-clicks
+    imageGenerationTimeoutRef.current = setTimeout(() => {
+      imageGenerationTimeoutRef.current = null;
+    }, 2000);
 
     const currentSelectedImageBeforeClear = selectedImage || (sceneState?.selectedImageId
       ? sceneImages.find((img: GeneratedImage) => img.id === sceneState.selectedImageId)
@@ -561,6 +573,9 @@ export default function MediaGenerationView() {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+      }
+      if (imageGenerationTimeoutRef.current) {
+        clearTimeout(imageGenerationTimeoutRef.current);
       }
     };
   }, []);
