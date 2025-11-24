@@ -314,14 +314,41 @@ export default function BrandIdentityScreen() {
           }))
       : [];
 
-    if (selectedImages.length > 0) {
-      const { setUploadedImages } = useProjectStore.getState();
-      setUploadedImages(selectedImages);
-      console.log('[BrandIdentity] Saved', selectedImages.length, 'selected images for auto-generation');
-    }
+    // Helper to save assets and navigate (only call after project exists)
+    const saveAssetsAndNavigate = () => {
+      if (selectedImages.length > 0) {
+        const { setUploadedImages } = useProjectStore.getState();
+        setUploadedImages(selectedImages);
+        console.log('[BrandIdentity] Saved', selectedImages.length, 'selected images for auto-generation');
+      }
+      router.push('/workspace?autoGenerate=true');
+    };
 
-    // Navigate to workspace with autoGenerate flag
-    router.push('/workspace?autoGenerate=true');
+    // Check if project has storyboard before navigating
+    const { project } = useProjectStore.getState();
+    if (project?.storyboard && project.storyboard.length > 0) {
+      // Go to workspace - storyboard is ready
+      saveAssetsAndNavigate();
+    } else {
+      // Storyboard not ready yet (still generating) - show loading
+      console.log('[BrandIdentity] Storyboard not ready yet, waiting for auto-generation...');
+      setIsWaitingForProject(true);
+      // Poll for storyboard to be ready
+      const checkProject = setInterval(() => {
+        const { project: currentProject } = useProjectStore.getState();
+        if (currentProject?.storyboard && currentProject.storyboard.length > 0) {
+          clearInterval(checkProject);
+          setIsWaitingForProject(false);
+          saveAssetsAndNavigate();
+        }
+      }, 500);
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        clearInterval(checkProject);
+        setIsWaitingForProject(false);
+        console.log('[BrandIdentity] Still waiting for storyboard after 5 minutes');
+      }, 300000);
+    }
   };
 
   const handleAddRecoloredImages = (baseCarId: string, images: Array<{ url: string, colorHex: string }>, replaceImageIds?: string[]) => {

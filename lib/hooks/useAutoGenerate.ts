@@ -43,8 +43,14 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    // Only run once when enabled
+    // Only run once when enabled and storyboard is available
     if (!enabled || hasStartedRef.current || !project || isRunning) {
+      return;
+    }
+
+    // Wait for storyboard to be available before starting
+    if (!project.storyboard || project.storyboard.length === 0) {
+      console.log('[useAutoGenerate] Waiting for storyboard to be available...');
       return;
     }
 
@@ -61,6 +67,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
           type: 'status',
         });
 
+        // Double-check storyboard is still available
         if (!project.storyboard || project.storyboard.length === 0) {
           throw new Error('No storyboard found. Please create a project first.');
         }
