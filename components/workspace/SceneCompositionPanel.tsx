@@ -126,16 +126,16 @@ export default function SceneCompositionPanel({ sceneIndex }: SceneCompositionPa
     // Search in uploaded images
     if (project?.uploadedImages) {
       for (const uploadedImage of project.uploadedImages) {
-        if (uploadedImage.id === itemId) return uploadedImage.url;
+        if (uploadedImage.id === itemId) return uploadedImage.localPath || uploadedImage.url;
         const processed = uploadedImage.processedVersions?.find(p => p.id === itemId);
-        if (processed) return processed.url;
+        if (processed) return processed.localPath || processed.url;
       }
     }
 
     // Search in generated images
     for (const scn of scenes) {
       const img = scn.generatedImages?.find((i: GeneratedImage) => i.id === itemId);
-      if (img) return img.url;
+      if (img) return img.localPath || img.url;
     }
 
     return null;

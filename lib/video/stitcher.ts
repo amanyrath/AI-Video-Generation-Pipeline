@@ -225,6 +225,35 @@ function selectTransition(similarity: number): TransitionConfig {
 }
 
 /**
+ * Create a video segment from an image (for logo display)
+ * @param imagePath - Path to the logo image
+ * @param duration - Duration in seconds for the logo display
+ * @param outputPath - Path where the video segment should be saved
+ * @param width - Video width (default: 1920)
+ * @param height - Video height (default: 1080)
+ */
+async function createLogoVideoSegment(
+  imagePath: string,
+  duration: number,
+  outputPath: string,
+  width: number = 1920,
+  height: number = 1080
+): Promise<void> {
+  try {
+    // Create a video from the logo image
+    // -loop 1: loop the image
+    // -t duration: set duration
+    // -vf: scale and pad to maintain aspect ratio on black background
+    // -pix_fmt yuv420p: ensure compatibility
+    const command = `ffmpeg -loop 1 -i "${imagePath}" -vf "scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black" -c:v libx264 -t ${duration} -pix_fmt yuv420p -r 30 -y "${outputPath}"`;
+    await execAsync(command);
+    console.log(`[VideoStitcher] Created logo video segment: ${outputPath}`);
+  } catch (error: any) {
+    throw new Error(`Failed to create logo video segment: ${error.message}`);
+  }
+}
+
+/**
  * Validate all videos have compatible codecs and resolutions
  */
 async function validateVideoCompatibility(videoPaths: string[]): Promise<void> {
@@ -738,6 +767,7 @@ function buildTextOverlaysFilter(
  * @param projectId - Project ID for organizing output files
  * @param textOverlays - Optional array of text overlays to render on the video
  * @param style - Optional visual style for applying LUTs ('whimsical' | 'luxury' | 'offroad')
+ * @param companyLogoPath - Optional path to company logo image for end transition
  * @returns Path to the stitched output video file
  *
  * @throws Error if video files don't exist, are invalid, or stitching fails
@@ -746,7 +776,8 @@ export async function stitchVideos(
   videoPaths: string[],
   projectId: string,
   textOverlays?: TextOverlay[],
-  style?: 'whimsical' | 'luxury' | 'offroad' | null
+  style?: 'whimsical' | 'luxury' | 'offroad' | null,
+  companyLogoPath?: string
 ): Promise<{ localPath: string; s3Url: string; s3Key?: string; storedFile: StoredFile }> {
   // Validate input
   if (!videoPaths || videoPaths.length === 0) {
@@ -771,22 +802,34 @@ export async function stitchVideos(
   await fs.mkdir(tempDir, { recursive: true });
 
   try {
+    // If company logo is provided, create a logo video segment
+    let logoVideoPath: string | null = null;
+    const LOGO_DURATION = 2.0; // 2 seconds for logo display
+    const LOGO_FADE_DURATION = 0.5; // 0.5 second fade in
+
+    if (companyLogoPath) {
+      logoVideoPath = path.join(tempDir, 'logo_segment.mp4');
+      console.log('[VideoStitcher] Creating company logo video segment...');
+      await createLogoVideoSegment(companyLogoPath, LOGO_DURATION, logoVideoPath);
+    }
+
     // Get video info (including durations and audio stream detection)
     console.log('[VideoStitcher] Analyzing videos...');
+    const allVideoPaths = logoVideoPath ? [...videoPaths, logoVideoPath] : videoPaths;
     const videoInfos = await Promise.all(
-      videoPaths.map((vp) => getVideoInfo(vp))
+      allVideoPaths.map((vp) => getVideoInfo(vp))
     );
     const videoDurations = videoInfos.map((info) => info.duration);
     const hasAudioStreams = videoInfos.map((info) => info.hasAudio);
-    
+
     console.log(`[VideoStitcher] Video durations: ${videoDurations.map((d, i) => `Video ${i}: ${d.toFixed(2)}s`).join(', ')}`);
     console.log(`[VideoStitcher] Total duration: ${videoDurations.reduce((a, b) => a + b, 0).toFixed(2)}s`);
-    console.log(`[VideoStitcher] Audio streams detected: ${hasAudioStreams.filter(h => h).length}/${videoPaths.length} videos have audio`);
+    console.log(`[VideoStitcher] Audio streams detected: ${hasAudioStreams.filter(h => h).length}/${allVideoPaths.length} videos have audio`);
 
     // Handle single video case (no transitions needed)
-    if (videoPaths.length === 1) {
+    if (allVideoPaths.length === 1) {
       console.log('[VideoStitcher] Single video, copying without transitions...');
-      const command = `ffmpeg -i "${videoPaths[0]}" -c copy -y "${outputPath}"`;
+      const command = `ffmpeg -i "${allVideoPaths[0]}" -c copy -y "${outputPath}"`;
       await execAsync(command);
     } else {
       // Analyze similarity between consecutive video pairs
@@ -794,15 +837,28 @@ export async function stitchVideos(
       const similarities: number[] = [];
       const transitions: TransitionConfig[] = [];
 
-      for (let i = 0; i < videoPaths.length - 1; i++) {
-        const similarity = await analyzeVideoSimilarity(
-          videoPaths[i],
-          videoPaths[i + 1],
-          tempDir
-        );
-        similarities.push(similarity);
+      for (let i = 0; i < allVideoPaths.length - 1; i++) {
+        let similarity: number;
+        let transition: TransitionConfig;
 
-        const transition = selectTransition(similarity);
+        // If this is the transition to the logo (last transition), use a fade
+        if (logoVideoPath && i === allVideoPaths.length - 2) {
+          console.log('[VideoStitcher] Adding fade transition to company logo...');
+          similarity = 0; // Force fade transition
+          transition = {
+            type: 'fade',
+            duration: LOGO_FADE_DURATION,
+          };
+        } else {
+          similarity = await analyzeVideoSimilarity(
+            allVideoPaths[i],
+            allVideoPaths[i + 1],
+            tempDir
+          );
+          transition = selectTransition(similarity);
+        }
+
+        similarities.push(similarity);
         transitions.push(transition);
 
         console.log(
@@ -813,7 +869,7 @@ export async function stitchVideos(
       // Stitch videos with transitions
       console.log('[VideoStitcher] Stitching videos with smooth transitions...');
       await stitchVideosWithTransitions(
-        videoPaths,
+        allVideoPaths,
         outputPath,
         transitions,
         videoDurations,

@@ -79,6 +79,7 @@ export default function EditorView() {
     mediaDrawer,
     addChatMessage,
     setLiveEditingPrompts,
+    updateMediaDrawer,
   } = useUIStore();
   
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -233,8 +234,64 @@ export default function EditorView() {
     }
   }, [sceneState?.selectedImageId]);
 
+  // Track previous scene index to save changes before switching
+  const prevSceneIndexRef = useRef(currentSceneIndex);
+
   // Initialize edited fields when scene changes - load current scene's saved values
   useEffect(() => {
+    const prevSceneIndex = prevSceneIndexRef.current;
+
+    // Save any pending changes from the previous scene before switching
+    if (prevSceneIndex !== currentSceneIndex) {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+
+      // Force immediate save of previous scene's changes
+      if (editedPrompt.trim()) {
+        let imageInputUrls: string[] = [];
+
+        // Collect all image URLs from different sources
+        const mediaUrls: string[] = [];
+
+        // Get URLs from media drawer drops or existing media previews
+        if (droppedImageUrls.length > 0) {
+          mediaUrls.push(...droppedImageUrls);
+        } else {
+          customImagePreviews
+            .filter((p): p is { url: string; source: 'file' | 'media' } => p !== null && p.source === 'media')
+            .forEach(preview => {
+              const url = preview.url.startsWith('/api/serve-image?path=')
+                ? decodeURIComponent(preview.url.split('path=')[1])
+                : preview.url;
+              mediaUrls.push(url);
+            });
+        }
+
+        imageInputUrls = mediaUrls;
+
+        const imageInput = imageInputUrls.length === 0
+          ? undefined
+          : imageInputUrls.length === 1
+            ? imageInputUrls[0]
+            : imageInputUrls;
+
+        // Update the PREVIOUS scene's settings immediately
+        updateSceneSettings(prevSceneIndex, {
+          imagePrompt: editedPrompt.trim(),
+          videoPrompt: editedVideoPrompt.trim() || editedPrompt.trim(),
+          negativePrompt: editedNegativePrompt.trim() || undefined,
+          customDuration: editedDuration ? Number(editedDuration) : undefined,
+          customImageInput: imageInput,
+        });
+      }
+
+      // Update the ref for next time
+      prevSceneIndexRef.current = currentSceneIndex;
+    }
+
+    // Load the new scene's data
     if (currentScene) {
       setEditedPrompt(currentScene.imagePrompt);
       setEditedVideoPrompt(currentScene.videoPrompt || currentScene.imagePrompt); // Fallback to imagePrompt for backward compatibility
@@ -248,7 +305,7 @@ export default function EditorView() {
       setDroppedImageUrls([]);
       setCustomImagePreviews(imageInputs.map(url => ({ url, source: 'media' as const })));
     }
-  }, [currentSceneIndex]);
+  }, [currentSceneIndex, editedPrompt, editedVideoPrompt, editedNegativePrompt, editedDuration, customImagePreviews, droppedImageUrls, updateSceneSettings, currentScene]);
 
   // Auto-populate seed image (slot 0) with selected image from image tab
   useEffect(() => {
@@ -735,6 +792,8 @@ export default function EditorView() {
     const selectedImg = sceneImages.find((img: GeneratedImage) => img.id === imageId);
     if (selectedImg && selectedImg.localPath) {
       setSeedImageId(imageId);
+      // Sync with the global media drawer seed image (right panel)
+      updateMediaDrawer({ seedImageId: imageId });
     }
   };
 
@@ -1245,6 +1304,14 @@ export default function EditorView() {
       }
     }
 
+    // Search in additional media
+    if (project?.additionalMedia) {
+      const additionalMediaItem = project.additionalMedia.find(item => item.id === itemId);
+      if (additionalMediaItem) {
+        return additionalMediaItem.localPath || additionalMediaItem.url || null;
+      }
+    }
+
     return null;
   };
 
@@ -1267,7 +1334,7 @@ export default function EditorView() {
       // Set as custom image preview
       // If it's a local path, convert to serveable URL for preview
       let previewUrl = imageUrl;
-      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api') && !imageUrl.startsWith('blob:')) {
+      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/') && !imageUrl.startsWith('blob:')) {
         previewUrl = `/api/serve-image?path=${encodeURIComponent(imageUrl)}`;
       }
 

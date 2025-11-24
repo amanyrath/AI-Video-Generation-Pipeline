@@ -158,19 +158,19 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
 
                   // Strategy: 1 interior + 2 exterior (if available)
                   if (interiorImages.length > 0) {
-                    selectedRefs.push(interiorImages[0].url);
+                    selectedRefs.push(interiorImages[0].localPath || interiorImages[0].url);
                   }
 
                   const numExteriorToAdd = Math.min(2, exteriorImages.length);
                   for (let i = 0; i < numExteriorToAdd; i++) {
                     if (exteriorImages[i]) {
-                      selectedRefs.push(exteriorImages[i].url);
+                      selectedRefs.push(exteriorImages[i].localPath || exteriorImages[i].url);
                     }
                   }
 
                   // If no interior/exterior split, just use first 3 images
                   if (selectedRefs.length === 0) {
-                    selectedRefs.push(...uploadedImages.slice(0, 3).map(img => img.url));
+                    selectedRefs.push(...uploadedImages.slice(0, 3).map(img => img.localPath || img.url));
                   }
 
                   if (selectedRefs.length > 0) {
@@ -413,7 +413,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
       referenceImageUrls = scene.referenceImageUrls as string[];
       console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using ${referenceImageUrls.length} AI-selected scene-specific reference images`);
     } else {
-      referenceImageUrls = uploadedImages.map(img => img.url);
+      referenceImageUrls = uploadedImages.map(img => img.localPath || img.url);
       console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using ${referenceImageUrls.length} brand assets as reference images (fallback - no scene-specific selection)`);
     }
 
