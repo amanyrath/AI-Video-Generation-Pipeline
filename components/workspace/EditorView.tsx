@@ -96,6 +96,7 @@ export default function EditorView() {
   const [customImageFiles, setCustomImageFiles] = useState<File[]>([]);
   const [customImagePreviews, setCustomImagePreviews] = useState<Array<{ url: string; source: 'file' | 'media' | 'url' } | null>>([]);
   const [droppedImageUrls, setDroppedImageUrls] = useState<string[]>([]); // Store original URLs from dropped media
+  const [imageInputMode, setImageInputMode] = useState<'frame' | 'reference'>('frame'); // Toggle between frame interpolation and reference images
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
@@ -305,7 +306,7 @@ export default function EditorView() {
       setDroppedImageUrls([]);
       setCustomImagePreviews(imageInputs.map(url => ({ url, source: 'media' as const })));
     }
-  }, [currentSceneIndex, editedPrompt, editedVideoPrompt, editedNegativePrompt, editedDuration, customImagePreviews, droppedImageUrls, updateSceneSettings, currentScene]);
+  }, [currentSceneIndex, updateSceneSettings, currentScene]);
 
   // Auto-populate seed image (slot 0) with selected image from image tab
   useEffect(() => {
@@ -842,103 +843,118 @@ export default function EditorView() {
         console.log('[EditorView] Uploaded image to S3:', s3Url.substring(0, 80) + '...');
       }
 
-      // Collect reference images from slots 1-3
-      const referenceImageUrls: string[] = [];
-      for (let slotIndex = 1; slotIndex <= 3; slotIndex++) {
-        const preview = customImagePreviews[slotIndex];
-        if (preview) {
+      // Handle two mutually exclusive modes:
+      // 1. Frame Interpolation Mode: Uses first frame (from selected image) + optional last frame (slot 4)
+      // 2. Reference Images Mode: Uses first frame (from selected image) + reference images (slots 1, 2, 3)
+      // NOTE: For Google Veo models, these are mutually exclusive - use one OR the other
+
+      let lastFrameUrl: string | undefined;
+      let referenceImageUrls: string[] = [];
+
+      if (imageInputMode === 'frame') {
+        // Frame Interpolation Mode - handle last frame (slot index 4) if provided
+        const lastFramePreview = customImagePreviews[4]; // Slot 4 is the last frame
+        if (lastFramePreview) {
+          // Upload last frame to S3 if it's a local file
           try {
-            let refUrl: string | undefined;
-            if (preview.source === 'file') {
-              // Find the file for this slot
+            if (lastFramePreview.source === 'file') {
+              // Find the file for slot 4
               let fileIndex = 0;
-              for (let i = 0; i < slotIndex; i++) {
+              for (let i = 0; i < 4; i++) {
                 if (customImagePreviews[i]?.source === 'file') {
                   fileIndex++;
                 }
               }
-              const refFile = customImageFiles[fileIndex];
-              if (refFile) {
-                const uploadResult = await uploadImages([refFile], project.id, false);
+              const lastFrameFile = customImageFiles[fileIndex];
+              if (lastFrameFile) {
+                // Upload the file using uploadImages
+                const uploadResult = await uploadImages([lastFrameFile], project.id, false);
                 if (uploadResult.images && uploadResult.images.length > 0) {
-                  refUrl = uploadResult.images[0].url;
+                  lastFrameUrl = uploadResult.images[0].url;
+                  console.log('[EditorView] Uploaded last frame to S3:', lastFrameUrl.substring(0, 80) + '...');
                 }
               }
-            } else if (preview.url.startsWith('http://') || preview.url.startsWith('https://')) {
-              refUrl = preview.url;
-            } else if (preview.url.startsWith('/api/serve-image')) {
-              const localPath = decodeURIComponent(preview.url.split('path=')[1]);
+            } else if (lastFramePreview.url.startsWith('http://') || lastFramePreview.url.startsWith('https://')) {
+              lastFrameUrl = lastFramePreview.url;
+            } else if (lastFramePreview.url.startsWith('/api/serve-image')) {
+              // Extract the local path and upload it
+              const localPath = decodeURIComponent(lastFramePreview.url.split('path=')[1]);
               const uploadResult = await uploadImageToS3(localPath, project.id);
-              refUrl = uploadResult.s3Url;
-            }
-
-            if (refUrl) {
-              referenceImageUrls.push(refUrl);
-              console.log(`[EditorView] Added reference image ${slotIndex}:`, refUrl.substring(0, 80) + '...');
+              lastFrameUrl = uploadResult.s3Url;
+              console.log('[EditorView] Uploaded last frame (from local path) to S3:', lastFrameUrl.substring(0, 80) + '...');
             }
           } catch (error) {
-            console.error(`Error uploading reference image ${slotIndex}:`, error);
-            // Continue with other reference images
+            console.error('Error uploading last frame:', error);
+            // Don't throw - continue without last frame
           }
         }
-      }
+      } else {
+        // Reference Images Mode - handle reference images (slots 1, 2, 3)
+        const referenceSlots = [1, 2, 3];
+        const referenceUploads: Promise<string | null>[] = [];
 
-      // Handle last frame (slot index 4) if provided
-      // NOTE: For Google Veo models, this enables "interpolation mode"
-      // - Standard mode: Uses only the starting frame (seed frame or generated image)
-      // - Interpolation mode: Uses both starting frame AND last_frame to generate transition video
-      // - These modes are mutually exclusive - you use one OR the other
-      let lastFrameUrl: string | undefined;
-      const lastFramePreview = customImagePreviews[4]; // Slot 4 is the last frame
-      if (lastFramePreview) {
-        // Upload last frame to S3 if it's a local file
-        try {
-          if (lastFramePreview.source === 'file') {
-            // Find the file for slot 4
-            let fileIndex = 0;
-            for (let i = 0; i < 4; i++) {
-              if (customImagePreviews[i]?.source === 'file') {
-                fileIndex++;
+        for (const slotIndex of referenceSlots) {
+          const preview = customImagePreviews[slotIndex];
+          if (!preview) continue;
+
+          referenceUploads.push(
+            (async () => {
+              try {
+                if (preview.source === 'file') {
+                  // Find the file for this slot
+                  let fileIndex = 0;
+                  for (let i = 0; i < slotIndex; i++) {
+                    if (customImagePreviews[i]?.source === 'file') {
+                      fileIndex++;
+                    }
+                  }
+                  const file = customImageFiles[fileIndex];
+                  if (file) {
+                    const uploadResult = await uploadImages([file], project.id, false);
+                    if (uploadResult.images && uploadResult.images.length > 0) {
+                      console.log(`[EditorView] Uploaded reference image ${slotIndex} to S3`);
+                      return uploadResult.images[0].url;
+                    }
+                  }
+                } else if (preview.url.startsWith('http://') || preview.url.startsWith('https://')) {
+                  return preview.url;
+                } else if (preview.url.startsWith('/api/serve-image')) {
+                  const localPath = decodeURIComponent(preview.url.split('path=')[1]);
+                  const uploadResult = await uploadImageToS3(localPath, project.id);
+                  console.log(`[EditorView] Uploaded reference image ${slotIndex} (from local path) to S3`);
+                  return uploadResult.s3Url;
+                }
+              } catch (error) {
+                console.error(`Error uploading reference image ${slotIndex}:`, error);
               }
-            }
-            const lastFrameFile = customImageFiles[fileIndex];
-            if (lastFrameFile) {
-              // Upload the file using uploadImages
-              const uploadResult = await uploadImages([lastFrameFile], project.id, false);
-              if (uploadResult.images && uploadResult.images.length > 0) {
-                lastFrameUrl = uploadResult.images[0].url;
-                console.log('[EditorView] Uploaded last frame to S3:', lastFrameUrl.substring(0, 80) + '...');
-              }
-            }
-          } else if (lastFramePreview.url.startsWith('http://') || lastFramePreview.url.startsWith('https://')) {
-            lastFrameUrl = lastFramePreview.url;
-          } else if (lastFramePreview.url.startsWith('/api/serve-image')) {
-            // Extract the local path and upload it
-            const localPath = decodeURIComponent(lastFramePreview.url.split('path=')[1]);
-            const uploadResult = await uploadImageToS3(localPath, project.id);
-            lastFrameUrl = uploadResult.s3Url;
-            console.log('[EditorView] Uploaded last frame (from local path) to S3:', lastFrameUrl.substring(0, 80) + '...');
-          }
-        } catch (error) {
-          console.error('Error uploading last frame:', error);
-          // Don't throw - continue without last frame
+              return null;
+            })()
+          );
         }
+
+        const uploadedRefs = await Promise.all(referenceUploads);
+        referenceImageUrls = uploadedRefs.filter((url): url is string => url !== null);
+        console.log(`[EditorView] Uploaded ${referenceImageUrls.length} reference images for video generation`);
       }
 
       // Generate video
       // Get model parameters from current scene and add last_frame if provided
-      // NOTE: When last_frame is provided, we're using "interpolation mode"
-      // where the model generates a transition from the starting frame to the last_frame
+      // NOTE: last_frame and reference images are mutually exclusive
       const modelParameters = {
         ...(currentScene.modelParameters || {}),
         ...(lastFrameUrl ? { last_frame: lastFrameUrl } : {}),
       };
 
-      console.log('[EditorView] Video generation mode:', lastFrameUrl ? 'Interpolation (start → end)' : 'Standard (from start frame)');
+      console.log('[EditorView] Video generation mode:',
+        imageInputMode === 'frame'
+          ? (lastFrameUrl ? 'Frame Interpolation (start → end)' : 'Standard (from start frame)')
+          : `Reference Images (${referenceImageUrls.length} refs)`
+      );
       console.log('[EditorView] Video generation parameters:', {
         baseImage: s3Url,
+        mode: imageInputMode,
         lastFrame: lastFrameUrl,
-        mode: lastFrameUrl ? 'interpolation' : 'standard',
+        referenceImages: referenceImageUrls.length,
       });
 
       const videoResponse = await generateVideo(
@@ -949,8 +965,8 @@ export default function EditorView() {
         undefined, // seedFrameUrl removed - users manually save last frame when needed
         (editedDuration ? Number(editedDuration) : currentScene.customDuration), // Use edited duration if set
         undefined, // subsceneIndex not used
-        modelParameters, // Pass model-specific parameters (including last_frame if provided)
-        referenceImageUrls.length > 0 ? referenceImageUrls : undefined // Pass reference images if provided
+        modelParameters, // Pass model-specific parameters (including last_frame if in frame mode)
+        referenceImageUrls.length > 0 ? referenceImageUrls : undefined // Pass reference images if in reference mode
       );
 
       // Poll for video completion (pass projectId and sceneIndex to trigger download)
@@ -1379,6 +1395,9 @@ export default function EditorView() {
   const createSlotDropHandler = (slotIndex: number) => (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    handleMediaDragLeave(); // Reset drag over state
+
+    console.log('[EditorView] Drop event on slot', slotIndex);
 
     // Check if it's a file drop (has files)
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -1413,14 +1432,22 @@ export default function EditorView() {
     } else {
       // Handle media drawer drop
       const data = e.dataTransfer.getData('application/json');
+      console.log('[EditorView] Drag data from dataTransfer:', data);
+
       if (data) {
-        const { itemId, itemType } = JSON.parse(data);
-        if (itemId && itemType) {
-          handleMediaDropOnImageInput(itemId, itemType, slotIndex);
+        try {
+          const { itemId, itemType } = JSON.parse(data);
+          console.log('[EditorView] Parsed drag data:', { itemId, itemType });
+          if (itemId && itemType) {
+            handleMediaDropOnImageInput(itemId, itemType, slotIndex);
+          }
+        } catch (error) {
+          console.error('[EditorView] Failed to parse drag data:', error);
         }
       } else {
         // Fallback: try to get from global drag state
         const { dragDrop } = useProjectStore.getState();
+        console.log('[EditorView] Fallback to drag state:', dragDrop);
         if (dragDrop.draggedItemId && dragDrop.draggedItemType) {
           handleMediaDropOnImageInput(dragDrop.draggedItemId, dragDrop.draggedItemType, slotIndex);
         }
@@ -1813,33 +1840,97 @@ export default function EditorView() {
               )}
             </div>
 
-            {/* Image Input - Seed, Reference, and Last Frame in same row */}
-            <div className="space-y-2">
+            {/* Image Input - First Frame and Last Frame OR Reference Images */}
+            <div className="space-y-3">
+              {/* Mode Toggle */}
+              <div className="flex items-center gap-2 p-2 bg-white/5 rounded-lg border border-white/10">
+                <span className="text-xs font-medium text-white/70">Input Mode:</span>
+                <div className="flex gap-1 bg-white/5 rounded-md p-0.5">
+                  <button
+                    onClick={() => {
+                      setImageInputMode('frame');
+                      // Clear all images when switching modes
+                      setCustomImagePreviews([]);
+                      setCustomImageFiles([]);
+                      setDroppedImageUrls([]);
+                    }}
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      imageInputMode === 'frame'
+                        ? 'bg-blue-500 text-white'
+                        : 'text-white/60 hover:text-white hover:bg-white/10'
+                    }`}
+                    type="button"
+                  >
+                    First/Last Frame
+                  </button>
+                  <button
+                    onClick={() => {
+                      setImageInputMode('reference');
+                      // Clear all images when switching modes
+                      setCustomImagePreviews([]);
+                      setCustomImageFiles([]);
+                      setDroppedImageUrls([]);
+                    }}
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      imageInputMode === 'reference'
+                        ? 'bg-blue-500 text-white'
+                        : 'text-white/60 hover:text-white hover:bg-white/10'
+                    }`}
+                    type="button"
+                  >
+                    Reference Images
+                  </button>
+                </div>
+              </div>
+
               {/* Labels Row */}
-              <div className="grid grid-cols-5 gap-3">
+              <div className="flex items-start justify-between gap-3">
+                {imageInputMode === 'frame' ? (
+                  <>
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-white">
+                        First Frame <span className="text-white/60 text-xs">(Starting frame)</span>
+                      </label>
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-white">
+                        Last Frame <span className="text-white/60 text-xs">(Interpolation mode)</span>
+                      </label>
+                      <p className="text-xs text-white/40 mt-0.5">
+                        Optional: Creates transition from start to end frame
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-white">
+                      Reference Images <span className="text-white/60 text-xs">(Up to 3 images)</span>
+                    </label>
+                    <p className="text-xs text-white/40 mt-0.5">
+                      Provide style references for video generation
+                    </p>
+                  </div>
+                )}
                 <div>
-                  <label className="block text-xs font-medium text-white">
-                    Seed Image <span className="text-white/60 text-xs">(First frame)</span>
-                  </label>
-                </div>
-                <div className="col-span-3">
-                  <label className="block text-xs font-medium text-white">
-                    Reference Images <span className="text-white/60 text-xs">(Up to 3 references)</span>
-                  </label>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-white">
-                    Last Frame <span className="text-white/60 text-xs">(Interpolation mode)</span>
-                  </label>
-                  <p className="text-xs text-white/40 mt-0.5">
-                    Optional: Creates transition from start to end frame
-                  </p>
+                  <button
+                    onClick={() => {
+                      setCustomImagePreviews([]);
+                      setCustomImageFiles([]);
+                      setDroppedImageUrls([]);
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium text-white/70 hover:text-white bg-white/5 hover:bg-white/10 rounded-md border border-white/20 hover:border-white/30 transition-colors"
+                    type="button"
+                  >
+                    Clear All
+                  </button>
                 </div>
               </div>
 
               {/* Images Row */}
-              <div className="grid grid-cols-5 gap-3">
-                {/* Seed Image - Column 1 */}
+              <div className={imageInputMode === 'frame' ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-3 gap-3'}>
+                {imageInputMode === 'frame' ? (
+                  <>
+                    {/* First Frame - Column 1 */}
                 <div>
                   {(() => {
                     const slotIndex = 0;
@@ -1851,7 +1942,7 @@ export default function EditorView() {
                           onDragOver={handleFileDragOver}
                           onDragLeave={handleFileDragLeave}
                           onDrop={createSlotDropHandler(slotIndex)}
-                          className={`block w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
+                          className={`block w-full h-32 rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
                             isOverDropZone
                               ? 'border-white/40 bg-white/10'
                               : 'border-white/20 hover:border-white/30 bg-white/5'
@@ -1861,7 +1952,7 @@ export default function EditorView() {
                             <>
                               <img
                                 src={preview.url}
-                                alt="Seed image"
+                                alt="First frame"
                                 className="w-full h-full object-cover"
                                 loading="lazy"
                               />
@@ -1920,90 +2011,7 @@ export default function EditorView() {
                   })()}
                 </div>
 
-                {/* Reference Images - Columns 2-4 */}
-                {[1, 2, 3].map((slotIndex) => {
-                  const preview = customImagePreviews[slotIndex];
-
-                  return (
-                    <div key={`slot-${slotIndex}`} className="relative">
-                        <label
-                          onDragOver={handleFileDragOver}
-                          onDragLeave={handleFileDragLeave}
-                          onDrop={createSlotDropHandler(slotIndex)}
-                          className={`block w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
-                            isOverDropZone
-                              ? 'border-white/40 bg-white/10'
-                              : 'border-white/20 hover:border-white/30 bg-white/5'
-                          }`}
-                        >
-                          {preview ? (
-                            <>
-                              <img
-                                src={preview.url}
-                                alt={`Reference image ${slotIndex}`}
-                                className="w-full h-full object-cover"
-                                loading="lazy"
-                              />
-                              <button
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  handleRemoveImage(slotIndex);
-                                }}
-                                className="absolute -top-2 -right-2 p-1 bg-red-500/80 text-white rounded-full hover:bg-red-600 transition-colors border border-red-400/50 z-10"
-                                type="button"
-                                title="Remove image"
-                              >
-                                <XCircle className="w-3.5 h-3.5" />
-                              </button>
-                            </>
-                          ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center p-2">
-                              <Upload className="w-6 h-6 text-white/30 mb-1" />
-                              <span className="text-xs text-white/40 text-center">Ref {slotIndex}</span>
-                            </div>
-                          )}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                if (file.size > 10 * 1024 * 1024) {
-                                  alert(`${file.name} is too large (max 10MB).`);
-                                  return;
-                                }
-                                const previewUrl = URL.createObjectURL(file);
-                                const newPreviews = [...customImagePreviews];
-                                const newFiles = [...customImageFiles];
-
-                                let fileIndex = 0;
-                                for (let i = 0; i < slotIndex; i++) {
-                                  if (customImagePreviews[i]?.source === 'file') {
-                                    fileIndex++;
-                                  }
-                                }
-
-                                newPreviews[slotIndex] = { url: previewUrl, source: 'file' };
-                                newFiles.splice(fileIndex, 0, file);
-
-                                setCustomImagePreviews(newPreviews);
-                                setCustomImageFiles(newFiles);
-                              }
-                              e.target.value = '';
-                            }}
-                            className="hidden"
-                          />
-                        </label>
-                        <div className="absolute bottom-1 left-1 right-1 text-center">
-                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-white/10 text-white/60">
-                            Ref {slotIndex}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                {/* Last Frame - Column 5 */}
+                {/* Last Frame - Column 2 */}
                 <div>
                   {(() => {
                     const slotIndex = 4;
@@ -2015,7 +2023,7 @@ export default function EditorView() {
                           onDragOver={handleFileDragOver}
                           onDragLeave={handleFileDragLeave}
                           onDrop={createSlotDropHandler(slotIndex)}
-                          className={`block w-full aspect-video rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
+                          className={`block w-full h-32 rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
                             isOverDropZone
                               ? 'border-white/40 bg-white/10'
                               : 'border-white/20 hover:border-white/30 bg-white/5'
@@ -2083,6 +2091,91 @@ export default function EditorView() {
                     );
                   })()}
                 </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Reference Images - 3 slots */}
+                    {[1, 2, 3].map((slotNum) => {
+                      const slotIndex = slotNum;
+                      const preview = customImagePreviews[slotIndex];
+
+                      return (
+                        <div key={slotIndex}>
+                          <div className="relative">
+                            <label
+                              onDragOver={handleFileDragOver}
+                              onDragLeave={handleFileDragLeave}
+                              onDrop={createSlotDropHandler(slotIndex)}
+                              className={`block w-full h-32 rounded-lg border-2 border-dashed cursor-pointer transition-colors overflow-hidden ${
+                                isOverDropZone
+                                  ? 'border-white/40 bg-white/10'
+                                  : 'border-white/20 hover:border-white/30 bg-white/5'
+                              }`}
+                            >
+                              {preview ? (
+                                <>
+                                  <img
+                                    src={preview.url}
+                                    alt={`Reference ${slotNum}`}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                  />
+                                  <button
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      handleRemoveImage(slotIndex);
+                                    }}
+                                    className="absolute -top-2 -right-2 p-1 bg-red-500/80 text-white rounded-full hover:bg-red-600 transition-colors border border-red-400/50 z-10"
+                                    type="button"
+                                    title="Remove image"
+                                  >
+                                    <XCircle className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              ) : (
+                                <div className="w-full h-full flex flex-col items-center justify-center p-2">
+                                  <Upload className="w-6 h-6 text-white/30 mb-1" />
+                                  <span className="text-xs text-white/40 text-center">Ref {slotNum}</span>
+                                </div>
+                              )}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    if (file.size > 10 * 1024 * 1024) {
+                                      alert(`${file.name} is too large (max 10MB).`);
+                                      return;
+                                    }
+                                    const previewUrl = URL.createObjectURL(file);
+                                    const newPreviews = [...customImagePreviews];
+                                    const newFiles = [...customImageFiles];
+
+                                    let fileIndex = 0;
+                                    for (let i = 0; i < slotIndex; i++) {
+                                      if (customImagePreviews[i]?.source === 'file') {
+                                        fileIndex++;
+                                      }
+                                    }
+
+                                    newPreviews[slotIndex] = { url: previewUrl, source: 'file' };
+                                    newFiles.splice(fileIndex, 0, file);
+
+                                    setCustomImagePreviews(newPreviews);
+                                    setCustomImageFiles(newFiles);
+                                  }
+                                  e.target.value = '';
+                                }}
+                                className="hidden"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
             </div>
 
