@@ -117,8 +117,8 @@ export async function POST(request: NextRequest) {
           const tempLogoPath = path.join('/tmp', 'projects', projectId, 'temp', `logo_${Date.now()}.png`);
           await fs.mkdir(path.dirname(tempLogoPath), { recursive: true });
 
-          // Download from S3
-          const logoUrl = await storageService.getPublicUrl(logoAsset.s3Key);
+          // Download from S3 using pre-signed URL
+          const logoUrl = await storageService.getPreSignedUrl(logoAsset.s3Key, 3600);
           const response = await fetch(logoUrl);
           if (response.ok) {
             const buffer = await response.arrayBuffer();
