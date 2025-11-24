@@ -40,7 +40,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const editedVideoPaths = await applyClipEdits(clips as TimelineClip[], projectId);
+    // Normalize clips: ensure all clips have a type field
+    // Fallback to 'video' for clips created before type field was added
+    const normalizedClips = clips.map((clip: any) => ({
+      ...clip,
+      type: clip.type || (clip.videoLocalPath ? 'video' : 'image'),
+    })) as TimelineClip[];
+
+    const editedVideoPaths = await applyClipEdits(normalizedClips, projectId);
 
     return NextResponse.json({
       success: true,

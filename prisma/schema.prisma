@@ -195,6 +195,7 @@ model SeedFrame {
 
 model TimelineClip {
   id        String         @id @default(uuid())
+  type      String         @default("video") // 'video' or 'image'
   title     String
   startTime Float
   duration  Float

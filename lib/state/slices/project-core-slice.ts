@@ -339,57 +339,63 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
     if (uploadedImages && uploadedImages.length > 0) {
       console.log('[setStoryboard] Auto-analyzing all scenes for reference images');
 
-      // Analyze each scene asynchronously
-      scenes.forEach(async (scene, index) => {
-        const scenePrompt = scene.videoPrompt || scene.imagePrompt || scene.description || '';
+      // Analyze each scene asynchronously - use Promise.all to ensure all complete
+      Promise.all(
+        scenes.map(async (scene, index) => {
+          const scenePrompt = scene.videoPrompt || scene.imagePrompt || scene.description || '';
 
-        try {
-          const selectedUrls = await selectSceneReferenceImages(uploadedImages, scenePrompt);
+          try {
+            const selectedUrls = await selectSceneReferenceImages(uploadedImages, scenePrompt);
 
-          // Update the scene with selected references
-          const currentState = get();
-          if (currentState.project && currentState.project.storyboard[index]) {
-            set((s) => {
-              if (!s.project) return s;
+            // Update the scene with selected references
+            const currentState = get();
+            if (currentState.project && currentState.project.storyboard[index]) {
+              set((s) => {
+                if (!s.project) return s;
 
-              const updatedStoryboard = [...s.project.storyboard];
-              updatedStoryboard[index] = {
-                ...updatedStoryboard[index],
-                referenceImageUrls: selectedUrls,
-              };
-
-              const updatedScenes = [...s.scenes];
-              if (updatedScenes[index]) {
-                updatedScenes[index] = {
-                  ...updatedScenes[index],
+                const updatedStoryboard = [...s.project.storyboard];
+                updatedStoryboard[index] = {
+                  ...updatedStoryboard[index],
                   referenceImageUrls: selectedUrls,
                 };
-              }
 
-              console.log(`[setStoryboard] ✅ Scene ${index + 1}: Auto-assigned ${selectedUrls.length} reference images`);
+                const updatedScenes = [...s.scenes];
+                if (updatedScenes[index]) {
+                  updatedScenes[index] = {
+                    ...updatedScenes[index],
+                    referenceImageUrls: selectedUrls,
+                  };
+                }
 
-              return {
-                project: {
-                  ...s.project,
-                  storyboard: updatedStoryboard,
-                },
-                scenes: updatedScenes,
-              };
-            });
+                console.log(`[setStoryboard] ✅ Scene ${index + 1}: Auto-assigned ${selectedUrls.length} reference images`);
 
-            // Persist to database if scene has an ID
-            if (scene.id) {
-              import('@/lib/api-client').then(({ updateScene }) => {
-                updateScene(scene.id, { referenceImageUrls: selectedUrls })
-                  .catch((error) => {
-                    console.error(`[setStoryboard] ❌ Failed to persist references for scene ${index + 1}:`, error);
-                  });
+                return {
+                  project: {
+                    ...s.project,
+                    storyboard: updatedStoryboard,
+                  },
+                  scenes: updatedScenes,
+                };
               });
+
+              // Persist to database if scene has an ID
+              if (scene.id) {
+                import('@/lib/api-client').then(({ updateScene }) => {
+                  updateScene(scene.id, { referenceImageUrls: selectedUrls })
+                    .catch((error) => {
+                      console.error(`[setStoryboard] ❌ Failed to persist references for scene ${index + 1}:`, error);
+                    });
+                });
+              }
             }
+          } catch (error) {
+            console.error(`[setStoryboard] ❌ Failed to analyze scene ${index + 1}:`, error);
           }
-        } catch (error) {
-          console.error(`[setStoryboard] ❌ Failed to analyze scene ${index + 1}:`, error);
-        }
+        })
+      ).then(() => {
+        console.log('[setStoryboard] ✅ All scene reference assignments completed');
+      }).catch((error) => {
+        console.error('[setStoryboard] ❌ Error during scene reference assignment:', error);
       });
     }
   },
@@ -618,68 +624,74 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
     if (images.length > 0 && storyboard && storyboard.length > 0) {
       console.log('[setUploadedImages] ✅ Starting AI analysis for', storyboard.length, 'scenes');
 
-      // Analyze each scene asynchronously
-      storyboard.forEach(async (scene, index) => {
-        // Skip if scene already has references
-        if (scene.referenceImageUrls && scene.referenceImageUrls.length > 0) {
-          console.log(`[setUploadedImages] Scene ${index + 1}: Already has ${scene.referenceImageUrls.length} references, skipping`);
-          return;
-        }
+      // Analyze each scene asynchronously - use Promise.all to ensure all complete
+      Promise.all(
+        storyboard.map(async (scene, index) => {
+          // Skip if scene already has references
+          if (scene.referenceImageUrls && scene.referenceImageUrls.length > 0) {
+            console.log(`[setUploadedImages] Scene ${index + 1}: Already has ${scene.referenceImageUrls.length} references, skipping`);
+            return;
+          }
 
-        const scenePrompt = scene.videoPrompt || scene.imagePrompt || scene.description || '';
-        console.log(`[setUploadedImages] Scene ${index + 1}: Analyzing with prompt:`, scenePrompt.substring(0, 100));
+          const scenePrompt = scene.videoPrompt || scene.imagePrompt || scene.description || '';
+          console.log(`[setUploadedImages] Scene ${index + 1}: Analyzing with prompt:`, scenePrompt.substring(0, 100));
 
-        try {
-          const selectedUrls = await selectSceneReferenceImages(images, scenePrompt);
-          console.log(`[setUploadedImages] Scene ${index + 1}: AI selected ${selectedUrls.length} reference images`);
+          try {
+            const selectedUrls = await selectSceneReferenceImages(images, scenePrompt);
+            console.log(`[setUploadedImages] Scene ${index + 1}: AI selected ${selectedUrls.length} reference images`);
 
-          // Update the scene with selected references
-          const currentState = get();
-          if (currentState.project && currentState.project.storyboard[index]) {
-            set((s) => {
-              if (!s.project) return s;
+            // Update the scene with selected references
+            const currentState = get();
+            if (currentState.project && currentState.project.storyboard[index]) {
+              set((s) => {
+                if (!s.project) return s;
 
-              const updatedStoryboard = [...s.project.storyboard];
-              updatedStoryboard[index] = {
-                ...updatedStoryboard[index],
-                referenceImageUrls: selectedUrls,
-              };
-
-              const updatedScenes = [...s.scenes];
-              if (updatedScenes[index]) {
-                updatedScenes[index] = {
-                  ...updatedScenes[index],
+                const updatedStoryboard = [...s.project.storyboard];
+                updatedStoryboard[index] = {
+                  ...updatedStoryboard[index],
                   referenceImageUrls: selectedUrls,
                 };
-              }
 
-              console.log(`[setUploadedImages] ✅ Scene ${index + 1}: Auto-assigned ${selectedUrls.length} reference images:`, selectedUrls);
+                const updatedScenes = [...s.scenes];
+                if (updatedScenes[index]) {
+                  updatedScenes[index] = {
+                    ...updatedScenes[index],
+                    referenceImageUrls: selectedUrls,
+                  };
+                }
 
-              return {
-                project: {
-                  ...s.project,
-                  storyboard: updatedStoryboard,
-                },
-                scenes: updatedScenes,
-              };
-            });
+                console.log(`[setUploadedImages] ✅ Scene ${index + 1}: Auto-assigned ${selectedUrls.length} reference images:`, selectedUrls);
 
-            // Persist to database if scene has an ID
-            if (scene.id) {
-              import('@/lib/api-client').then(({ updateScene }) => {
-                updateScene(scene.id, { referenceImageUrls: selectedUrls })
-                  .then(() => {
-                    console.log(`[setUploadedImages] ✅ Persisted ${selectedUrls.length} references for scene ${index + 1} to database`);
-                  })
-                  .catch((error) => {
-                    console.error(`[setUploadedImages] ❌ Failed to persist references for scene ${index + 1}:`, error);
-                  });
+                return {
+                  project: {
+                    ...s.project,
+                    storyboard: updatedStoryboard,
+                  },
+                  scenes: updatedScenes,
+                };
               });
+
+              // Persist to database if scene has an ID
+              if (scene.id) {
+                import('@/lib/api-client').then(({ updateScene }) => {
+                  updateScene(scene.id, { referenceImageUrls: selectedUrls })
+                    .then(() => {
+                      console.log(`[setUploadedImages] ✅ Persisted ${selectedUrls.length} references for scene ${index + 1} to database`);
+                    })
+                    .catch((error) => {
+                      console.error(`[setUploadedImages] ❌ Failed to persist references for scene ${index + 1}:`, error);
+                    });
+                });
+              }
             }
+          } catch (error) {
+            console.error(`[setUploadedImages] ❌ Failed to analyze scene ${index + 1}:`, error);
           }
-        } catch (error) {
-          console.error(`[setUploadedImages] ❌ Failed to analyze scene ${index + 1}:`, error);
-        }
+        })
+      ).then(() => {
+        console.log('[setUploadedImages] ✅ All scene reference assignments completed');
+      }).catch((error) => {
+        console.error('[setUploadedImages] ❌ Error during scene reference assignment:', error);
       });
     } else {
       console.warn('[setUploadedImages] ❌ Conditions not met for AI analysis:', {

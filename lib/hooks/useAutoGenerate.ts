@@ -78,19 +78,42 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
             type: 'status',
           });
 
-          // Wait up to 30 seconds for all scenes to have reference images assigned
+          // Wait up to 60 seconds for all scenes to have reference images assigned
           let waitTime = 0;
-          const maxWaitTime = 30000; // 30 seconds
-          const checkInterval = 500; // Check every 500ms
+          const maxWaitTime = 60000; // 60 seconds (increased from 30s)
+          const checkInterval = 200; // Check every 200ms (more frequent checks)
 
           while (waitTime < maxWaitTime) {
+            // Get fresh state on each iteration
             const currentState = useProjectStore.getState();
-            const allScenesHaveRefs = currentState.project?.storyboard.every(
-              scene => scene.referenceImageUrls && scene.referenceImageUrls.length > 0
-            );
+            const storyboard = currentState.project?.storyboard || [];
 
-            if (allScenesHaveRefs) {
+            // Check if all scenes have references
+            const scenesWithRefs = storyboard.filter(
+              scene => scene.referenceImageUrls && scene.referenceImageUrls.length > 0
+            ).length;
+
+            const totalScenes = storyboard.length;
+
+            console.log(`[useAutoGenerate] Reference assignment progress: ${scenesWithRefs}/${totalScenes} scenes`);
+
+            if (scenesWithRefs === totalScenes && totalScenes > 0) {
               console.log('[useAutoGenerate] ✅ All scenes have AI-selected reference images');
+
+              // Extra verification - log the actual reference URLs
+              storyboard.forEach((scene, idx) => {
+                console.log(`[useAutoGenerate] Scene ${idx + 1} references:`, scene.referenceImageUrls);
+              });
+
+              // CRITICAL: Verify references are actually there
+              const finalVerification = storyboard.map((scene, idx) => ({
+                sceneIndex: idx,
+                hasRefs: !!(scene.referenceImageUrls && scene.referenceImageUrls.length > 0),
+                refCount: scene.referenceImageUrls?.length || 0,
+                refs: scene.referenceImageUrls
+              }));
+              console.log('[useAutoGenerate] FINAL VERIFICATION before proceeding:', JSON.stringify(finalVerification, null, 2));
+
               break;
             }
 
@@ -99,9 +122,17 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
           }
 
           if (waitTime >= maxWaitTime) {
-            console.warn('[useAutoGenerate] ⚠️ Timeout waiting for AI scene analysis, using fallback strategy');
+            console.error('[useAutoGenerate] ❌ Timeout waiting for AI scene analysis after 60 seconds');
+            console.error('[useAutoGenerate] Current state:', {
+              uploadedImages: uploadedImages.length,
+              scenes: project.storyboard.map((scene, idx) => ({
+                index: idx + 1,
+                hasRefs: !!(scene.referenceImageUrls && scene.referenceImageUrls.length > 0),
+                refCount: scene.referenceImageUrls?.length || 0
+              }))
+            });
 
-            // Fallback: Assign 2 exterior + 1 interior to all scenes without reference images
+            // Fallback: Assign uploaded images to all scenes without reference images
             const currentState = useProjectStore.getState();
             const interiorImages = uploadedImages.filter(img =>
               img.originalName?.toLowerCase().includes('interior') ||
@@ -122,9 +153,10 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
             if (currentState.project?.storyboard) {
               currentState.project.storyboard.forEach((scene, index) => {
                 if (!scene.referenceImageUrls || scene.referenceImageUrls.length === 0) {
-                  // Pick 1 interior (if available) + 2 exterior images
+                  // Pick up to 3 reference images
                   const selectedRefs: string[] = [];
 
+                  // Strategy: 1 interior + 2 exterior (if available)
                   if (interiorImages.length > 0) {
                     selectedRefs.push(interiorImages[0].url);
                   }
@@ -136,10 +168,15 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
                     }
                   }
 
+                  // If no interior/exterior split, just use first 3 images
+                  if (selectedRefs.length === 0) {
+                    selectedRefs.push(...uploadedImages.slice(0, 3).map(img => img.url));
+                  }
+
                   if (selectedRefs.length > 0) {
                     const state = useProjectStore.getState();
                     state.updateSceneSettings?.(index, { referenceImageUrls: selectedRefs });
-                    console.log(`[useAutoGenerate] Fallback: Assigned ${selectedRefs.length} references to scene ${index + 1}`);
+                    console.log(`[useAutoGenerate] Fallback: Assigned ${selectedRefs.length} references to scene ${index + 1}:`, selectedRefs);
                   }
                 }
               });
@@ -342,10 +379,23 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
 
   // Generate image for a specific scene
   const generateImageForScene = async (sceneIndex: number) => {
-    const scene = project!.storyboard[sceneIndex];
-    const uploadedImages = project!.uploadedImages || [];
+    // IMPORTANT: Get fresh state to avoid stale closure
+    const currentState = useProjectStore.getState();
+    const scene = currentState.project!.storyboard[sceneIndex];
+    const uploadedImages = currentState.project!.uploadedImages || [];
 
-    console.log(`[useAutoGenerate] Generating image for scene ${sceneIndex}`);
+    console.log('='.repeat(80));
+    console.log(`[useAutoGenerate] generateImageForScene called for scene ${sceneIndex}`);
+    console.log(`[useAutoGenerate] Scene object:`, JSON.stringify({
+      index: sceneIndex,
+      description: scene.description,
+      hasReferenceImageUrls: !!scene.referenceImageUrls,
+      referenceImageUrlsType: Array.isArray(scene.referenceImageUrls) ? 'array' : typeof scene.referenceImageUrls,
+      referenceImageUrlsLength: scene.referenceImageUrls?.length || 0,
+      referenceImageUrls: scene.referenceImageUrls,
+      imagePrompt: scene.imagePrompt?.substring(0, 100)
+    }, null, 2));
+    console.log('='.repeat(80));
     setSceneStatus(sceneIndex, 'generating_image');
 
     // Get seed frame from previous scene if available
@@ -369,16 +419,37 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
 
     if (referenceImageUrls.length > 0) {
       console.log(`[useAutoGenerate] Scene ${sceneIndex}: Reference URLs:`, referenceImageUrls);
+    } else {
+      console.warn(`[useAutoGenerate] Scene ${sceneIndex}: ⚠️  NO REFERENCE IMAGES - This may produce inconsistent results!`);
+    }
+
+    // CRITICAL: Use first reference image as seedImage to trigger image-to-image mode
+    // This ensures IP-Adapter is used for consistency (just like manual mode)
+    let seedImageUrl: string | undefined;
+    if (referenceImageUrls.length > 0) {
+      seedImageUrl = referenceImageUrls[0];
+      console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using first reference image as seedImage for I2I mode:`, seedImageUrl.substring(0, 80) + '...');
+    } else if (seedFrameUrl) {
+      seedImageUrl = seedFrameUrl;
+      console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using seed frame as seedImage:`, seedFrameUrl.substring(0, 80) + '...');
     }
 
     const imageRequest: ImageGenerationRequest = {
-      projectId: project!.id,
+      projectId: currentState.project!.id,
       sceneIndex,
       prompt: scene.imagePrompt,
       negativePrompt: scene.negativePrompt,
+      seedImage: seedImageUrl, // ← ADDED: This triggers image-to-image mode with IP-Adapter
       referenceImageUrls: referenceImageUrls.length > 0 ? referenceImageUrls : undefined,
       seedFrame: seedFrameUrl,
     };
+
+    console.log(`[useAutoGenerate] Scene ${sceneIndex}: Sending image generation request with:`, {
+      prompt: scene.imagePrompt?.substring(0, 100),
+      referenceImageCount: referenceImageUrls.length,
+      hasSeedImage: !!seedImageUrl,
+      hasSeedFrame: !!seedFrameUrl,
+    });
 
     const imageResponse = await generateImage(imageRequest);
 
@@ -388,7 +459,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
 
     // Poll for completion
     const imageStatus = await pollImageStatus(imageResponse.predictionId, {
-      projectId: project!.id,
+      projectId: currentState.project!.id,
       sceneIndex,
     });
 
