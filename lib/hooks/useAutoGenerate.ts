@@ -61,16 +61,97 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
     const runAutoGeneration = async () => {
       try {
         console.log('[useAutoGenerate] Starting auto-generation for all scenes');
-        addChatMessage({
-          role: 'agent',
-          content: '🚀 Starting auto-generation for entire video...',
-          type: 'status',
-        });
 
         // Double-check storyboard is still available
         if (!project.storyboard || project.storyboard.length === 0) {
           throw new Error('No storyboard found. Please create a project first.');
         }
+
+        // Wait for AI scene analysis to complete (reference images to be assigned)
+        // This happens in setUploadedImages() which runs asynchronously
+        const uploadedImages = project.uploadedImages || [];
+        if (uploadedImages.length > 0) {
+          console.log('[useAutoGenerate] Waiting for AI scene analysis to complete...');
+          addChatMessage({
+            role: 'agent',
+            content: '🔍 Analyzing scenes and selecting appropriate reference images...',
+            type: 'status',
+          });
+
+          // Wait up to 30 seconds for all scenes to have reference images assigned
+          let waitTime = 0;
+          const maxWaitTime = 30000; // 30 seconds
+          const checkInterval = 500; // Check every 500ms
+
+          while (waitTime < maxWaitTime) {
+            const currentState = useProjectStore.getState();
+            const allScenesHaveRefs = currentState.project?.storyboard.every(
+              scene => scene.referenceImageUrls && scene.referenceImageUrls.length > 0
+            );
+
+            if (allScenesHaveRefs) {
+              console.log('[useAutoGenerate] ✅ All scenes have AI-selected reference images');
+              break;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+            waitTime += checkInterval;
+          }
+
+          if (waitTime >= maxWaitTime) {
+            console.warn('[useAutoGenerate] ⚠️ Timeout waiting for AI scene analysis, using fallback strategy');
+
+            // Fallback: Assign 2 exterior + 1 interior to all scenes without reference images
+            const currentState = useProjectStore.getState();
+            const interiorImages = uploadedImages.filter(img =>
+              img.originalName?.toLowerCase().includes('interior') ||
+              img.url.toLowerCase().includes('interior')
+            );
+            const exteriorImages = uploadedImages.filter(img =>
+              !img.originalName?.toLowerCase().includes('interior') &&
+              !img.url.toLowerCase().includes('interior')
+            );
+
+            console.log('[useAutoGenerate] Fallback: Found', {
+              interior: interiorImages.length,
+              exterior: exteriorImages.length,
+              total: uploadedImages.length
+            });
+
+            // Assign to scenes without references
+            if (currentState.project?.storyboard) {
+              currentState.project.storyboard.forEach((scene, index) => {
+                if (!scene.referenceImageUrls || scene.referenceImageUrls.length === 0) {
+                  // Pick 1 interior (if available) + 2 exterior images
+                  const selectedRefs: string[] = [];
+
+                  if (interiorImages.length > 0) {
+                    selectedRefs.push(interiorImages[0].url);
+                  }
+
+                  const numExteriorToAdd = Math.min(2, exteriorImages.length);
+                  for (let i = 0; i < numExteriorToAdd; i++) {
+                    if (exteriorImages[i]) {
+                      selectedRefs.push(exteriorImages[i].url);
+                    }
+                  }
+
+                  if (selectedRefs.length > 0) {
+                    const state = useProjectStore.getState();
+                    state.updateSceneSettings?.(index, { referenceImageUrls: selectedRefs });
+                    console.log(`[useAutoGenerate] Fallback: Assigned ${selectedRefs.length} references to scene ${index + 1}`);
+                  }
+                }
+              });
+            }
+          }
+        }
+
+        addChatMessage({
+          role: 'agent',
+          content: '🚀 Starting auto-generation for entire video...',
+          type: 'status',
+        });
 
         // Get rate limits for current models
         const imageModel = getEffectiveImageModel();

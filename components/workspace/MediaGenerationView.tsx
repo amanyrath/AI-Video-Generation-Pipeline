@@ -802,10 +802,10 @@ export default function MediaGenerationView() {
                         <div className="w-full h-full bg-white/5 flex items-center justify-center">
                           <Loader2 className="w-8 h-8 text-white/40 animate-spin" />
                         </div>
-                      ) : image.localPath ? (
+                      ) : (image.localPath || image.url) ? (
                         <>
                           <img
-                            src={`/api/serve-image?path=${encodeURIComponent(image.localPath)}`}
+                            src={image.localPath ? `/api/serve-image?path=${encodeURIComponent(image.localPath)}` : image.url}
                             alt={`Generated image ${index + 1}`}
                             className="w-full h-full object-cover"
                           />
@@ -823,7 +823,7 @@ export default function MediaGenerationView() {
                               Seed Image
                             </div>
                           )}
-                          {!isGenerating && image.localPath && (
+                          {!isGenerating && (image.localPath || image.url) && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

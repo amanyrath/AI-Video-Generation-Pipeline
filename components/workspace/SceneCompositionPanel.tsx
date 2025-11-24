@@ -439,21 +439,22 @@ export default function SceneCompositionPanel({ sceneIndex }: SceneCompositionPa
   };
 
   const handleGenerateComposite = async () => {
-    // Use the first reference image for composite generation
-    if (!referenceImage1 || !backgroundImage || !project) {
-      alert('Please add a reference image (Reference 1) and select a background image first');
+    // Use the first two reference images and background for composite generation
+    if ((!referenceImage1 && !referenceImage2) || !backgroundImage || !project) {
+      alert('Please add at least one reference image (Reference 1 or 2) and select a background image first');
       return;
     }
 
     setIsGeneratingComposite(true);
     try {
       console.log('Generating composite with:', {
-        reference: referenceImage1,
+        reference1: referenceImage1,
+        reference2: referenceImage2,
         background: backgroundImage,
       });
 
-      // Get the URLs for the images
-      const referenceUrl = getImageUrl(referenceImage1);
+      // Get the URLs for the images - prioritize reference1, fallback to reference2
+      const referenceUrl = getImageUrl(referenceImage1 || referenceImage2);
       const backgroundUrl = getImageUrl(backgroundImage);
 
       // Call the composite generation API
@@ -707,7 +708,18 @@ export default function SceneCompositionPanel({ sceneIndex }: SceneCompositionPa
 
             {/* Composite Box */}
             <div className="space-y-1">
-              <label className="text-xs font-medium text-white/80">Composite</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-white/80">Composite</label>
+                {compositeImage && !isGeneratingComposite && (
+                  <button
+                    onClick={handleGenerateComposite}
+                    className="px-2 py-1 text-[10px] font-medium bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-400/30 rounded transition-colors"
+                    title="Regenerate composite"
+                  >
+                    Regenerate
+                  </button>
+                )}
+              </div>
               <div
                 className="relative aspect-video rounded-lg border-2 border-white/20 overflow-hidden bg-white/5"
               >
@@ -726,15 +738,23 @@ export default function SceneCompositionPanel({ sceneIndex }: SceneCompositionPa
                       </>
                     ) : (
                       <>
-                        <div className="w-6 h-6 text-white/20">
-                          <svg viewBox="0 0 24 24" fill="none" className="w-full h-full">
-                            <rect x="3" y="3" width="8" height="8" fill="currentColor" opacity="0.5" />
-                            <rect x="13" y="3" width="8" height="8" fill="currentColor" opacity="0.3" />
-                            <rect x="3" y="13" width="8" height="8" fill="currentColor" opacity="0.3" />
-                            <rect x="13" y="13" width="8" height="8" fill="currentColor" opacity="0.5" />
+                        <button
+                          onClick={handleGenerateComposite}
+                          disabled={(!referenceImage1 && !referenceImage2) || !backgroundImage}
+                          className="px-3 py-2 text-xs font-medium bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-400/30 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                          title="Generate composite from reference images and background"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4">
+                            <rect x="3" y="3" width="8" height="8" fill="currentColor" opacity="0.7" />
+                            <rect x="13" y="3" width="8" height="8" fill="currentColor" opacity="0.5" />
+                            <rect x="3" y="13" width="8" height="8" fill="currentColor" opacity="0.5" />
+                            <rect x="13" y="13" width="8" height="8" fill="currentColor" opacity="0.7" />
                           </svg>
-                        </div>
-                        <p className="text-xs text-white/30">No composite</p>
+                          Generate
+                        </button>
+                        <p className="text-[10px] text-white/30 text-center px-2">
+                          Add reference & background
+                        </p>
                       </>
                     )}
                   </div>
