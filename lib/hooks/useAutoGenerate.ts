@@ -275,9 +275,17 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
       seedFrameUrl = prevScene.seedFrames![selectedFrameIndex]?.url;
     }
 
-    // Build reference image URLs (reference images from brand identity)
-    const referenceImageUrls = uploadedImages.map(img => img.url);
-    console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using ${referenceImageUrls.length} brand assets as reference images`);
+    // Use scene-specific reference images if available (AI-selected based on interior/exterior)
+    // Otherwise fall back to all uploaded images
+    let referenceImageUrls: string[] = [];
+    if (scene.referenceImageUrls && Array.isArray(scene.referenceImageUrls) && scene.referenceImageUrls.length > 0) {
+      referenceImageUrls = scene.referenceImageUrls as string[];
+      console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using ${referenceImageUrls.length} AI-selected scene-specific reference images`);
+    } else {
+      referenceImageUrls = uploadedImages.map(img => img.url);
+      console.log(`[useAutoGenerate] Scene ${sceneIndex}: Using ${referenceImageUrls.length} brand assets as reference images (fallback - no scene-specific selection)`);
+    }
+
     if (referenceImageUrls.length > 0) {
       console.log(`[useAutoGenerate] Scene ${sceneIndex}: Reference URLs:`, referenceImageUrls);
     }
