@@ -10,7 +10,6 @@ import { GeneratedImage, SeedFrame } from '@/lib/types';
 import { useMediaDragDrop } from '@/lib/hooks/useMediaDragDrop';
 import { getPublicBackgrounds, getPublicBackgroundUrl, PublicBackground } from '@/lib/backgrounds/public-backgrounds';
 import { selectSceneReferenceImages } from '@/lib/state/slices/project-core-slice';
-import { shouldMigrateSceneReferences, clearSceneReferencesForMigration } from '@/lib/utils/migrate-scene-references';
 
 interface ImagePreviewModalProps {
   image: GeneratedImage;
@@ -298,66 +297,55 @@ export default function EditorView() {
       setEditedVideoPrompt(currentScene.videoPrompt || currentScene.imagePrompt); // Fallback to imagePrompt for backward compatibility
       setEditedNegativePrompt(currentScene.negativePrompt || '--no watermark --no warped face --no floating limbs --no text artifacts --no distorted hands --no blurry edges');
       setEditedDuration(currentScene.customDuration || '');
-      // Initialize custom images - support both single string (legacy) and array
-      const imageInputs = currentScene.customImageInput
-        ? (Array.isArray(currentScene.customImageInput) ? currentScene.customImageInput : [currentScene.customImageInput])
-        : [];
+
+      // Initialize custom images and reference images
       setCustomImageFiles([]);
       setDroppedImageUrls([]);
-      setCustomImagePreviews(imageInputs.map(url => ({ url, source: 'media' as const })));
+
+      // Auto-populate reference images from scene.referenceImageUrls
+      if (currentScene.referenceImageUrls && currentScene.referenceImageUrls.length > 0) {
+        console.log(`[EditorView] Auto-populating ${currentScene.referenceImageUrls.length} reference images for scene ${currentSceneIndex + 1}:`, currentScene.referenceImageUrls);
+
+        // Create array with 4 slots (0 = seed/first frame, 1-3 = references)
+        const previews: Array<{ url: string; source: 'file' | 'media' | 'url' } | null> = [null, null, null, null];
+
+        // Fill slots 1, 2, 3 with reference images
+        currentScene.referenceImageUrls.forEach((url, index) => {
+          const slotIndex = index + 1; // Slots 1, 2, 3 (not 0, which is for seed frame)
+          if (slotIndex <= 3) {
+            previews[slotIndex] = {
+              url,
+              source: 'url' as const
+            };
+            console.log(`[EditorView] ✓ Populated reference slot ${slotIndex} with:`, url.substring(0, 80));
+          }
+        });
+
+        setCustomImagePreviews(previews);
+      } else {
+        // Fall back to legacy customImageInput if no referenceImageUrls
+        const imageInputs = currentScene.customImageInput
+          ? (Array.isArray(currentScene.customImageInput) ? currentScene.customImageInput : [currentScene.customImageInput])
+          : [];
+
+        if (imageInputs.length > 0) {
+          setCustomImagePreviews(imageInputs.map(url => ({ url, source: 'media' as const })));
+        } else {
+          setCustomImagePreviews([]);
+        }
+      }
     }
   }, [currentSceneIndex, updateSceneSettings, currentScene]);
 
-  // Auto-populate seed image (slot 0) with selected image from image tab
-  useEffect(() => {
-    // If there's a selected image from the image tab, auto-populate it as seed image
-    if (selectedImage && selectedImage.localPath) {
-      const seedImageUrl = selectedImage.localPath.startsWith('http://') || selectedImage.localPath.startsWith('https://') || selectedImage.localPath.startsWith('/api')
-        ? selectedImage.localPath
-        : `/api/serve-image?path=${encodeURIComponent(selectedImage.localPath)}`;
+  // REMOVED: Auto-population of slot 0 was confusing because:
+  // 1. Slot 0 is NOT used in video generation
+  // 2. Video generation always uses the selected image from the main grid
+  // 3. This made it appear like users needed to provide a "first frame" when they don't
+  //
+  // If you need slot 0, you can manually drag an image into it
 
-      // Only auto-populate if slot 0 is empty or was auto-populated before
-      setCustomImagePreviews(prev => {
-        const newPreviews = [...prev];
-        // Auto-populate if empty or if it's a URL (likely auto-populated before)
-        if (!newPreviews[0] || newPreviews[0].source === 'url') {
-          newPreviews[0] = {
-            url: seedImageUrl,
-            source: 'url' as const
-          };
-          console.log('[EditorView] Auto-populated seed image from selected image in image tab');
-        }
-        return newPreviews;
-      });
-    } else {
-      // Clear auto-populated seed image if no selected image
-      setCustomImagePreviews(prev => {
-        const newPreviews = [...prev];
-        if (newPreviews[0]?.source === 'url') {
-          newPreviews[0] = null;
-          console.log('[EditorView] Cleared auto-populated seed image');
-        }
-        return newPreviews;
-      });
-    }
-  }, [selectedImage]);
-
-  // One-time migration: Clear old scene references to trigger AI re-analysis
-  useEffect(() => {
-    if (project && shouldMigrateSceneReferences(project)) {
-      console.log('[EditorView Migration] Detected old global references, clearing to trigger AI re-analysis');
-
-      // Clear all scene-specific references to force AI re-analysis
-      const clearedScenes = clearSceneReferencesForMigration(project.storyboard);
-
-      // Update each scene
-      clearedScenes.forEach((scene, index) => {
-        updateSceneSettings(index, { referenceImageUrls: undefined });
-      });
-
-      console.log('[EditorView Migration] ✅ Migration complete - AI will now analyze each scene');
-    }
-  }, [project?.id]); // Run once per project
+  // Migration removed: Per-scene references are now assigned in setStoryboard/setUploadedImages
+  // No longer need to clear and re-trigger AI analysis
 
   // Auto-populate reference images (slots 1, 2, 3) with AI-powered smart selection
   // Store them in the scene's referenceImageUrls field for per-scene reference management
@@ -380,7 +368,7 @@ export default function EditorView() {
         globalRefs: project?.referenceImageUrls
       });
 
-      // Run AI analysis if needed
+      // Run AI analysis if needed (as a backup - main assignment happens in setStoryboard/setUploadedImages)
       if (needsAIAnalysis) {
         console.log('[EditorView] Running AI analysis for scene', currentSceneIndex, ':', scenePrompt.substring(0, 60));
 
@@ -396,33 +384,31 @@ export default function EditorView() {
             selectedCount: selectedUrls.length,
             urls: selectedUrls
           });
+
+          // Auto-populate the UI with the newly assigned references
+          if (selectedUrls.length > 0) {
+            const previews: Array<{ url: string; source: 'file' | 'media' | 'url' } | null> = [null, null, null, null];
+
+            selectedUrls.forEach((url, index) => {
+              const slotIndex = index + 1; // Slots 1, 2, 3 (not 0, which is for seed frame)
+              if (slotIndex <= 3) {
+                previews[slotIndex] = {
+                  url,
+                  source: 'url' as const
+                };
+              }
+            });
+
+            setCustomImagePreviews(previews);
+          }
         }).catch(error => {
           console.error('[EditorView] ❌ Failed to get AI-selected reference images:', error);
         });
       } else {
         console.log('[EditorView] Skipping AI analysis - scene already has references');
       }
-
-      // Populate customImagePreviews from scene's referenceImageUrls for display
-      if (currentScene.referenceImageUrls && currentScene.referenceImageUrls.length > 0) {
-        setCustomImagePreviews(prev => {
-          const newPreviews = [...prev];
-
-          currentScene.referenceImageUrls!.forEach((url, index) => {
-            const slotIndex = index + 1; // Slots 1, 2, 3 (not 0, which is seed)
-            if (slotIndex <= 3) {
-              newPreviews[slotIndex] = {
-                url,
-                source: 'url' as const
-              };
-            }
-          });
-
-          return newPreviews;
-        });
-      }
     }
-  }, [project?.uploadedImages, currentSceneIndex, editedVideoPrompt, project?.storyboard]);
+  }, [project?.uploadedImages, currentSceneIndex, editedVideoPrompt, project?.storyboard, updateSceneSettings]);
 
   // Sync edited prompts to liveEditingPrompts for real-time API preview
   useEffect(() => {
@@ -480,6 +466,12 @@ export default function EditorView() {
       // Get per-scene reference images (AI-selected based on scene type: interior vs exterior)
       // ONLY use scene-specific references, no global fallback
       let referenceImageUrls = (currentScene.referenceImageUrls || []).slice(0, 3);
+
+      console.log(`[EditorView] Scene ${currentSceneIndex + 1}: Reference images for generation:`, {
+        sceneHasRefs: !!currentScene.referenceImageUrls,
+        refCount: referenceImageUrls.length,
+        refs: referenceImageUrls
+      });
 
       // Get seed frame from previous scene (for Scenes 1-4, to use as seed image for image-to-image generation)
       let seedImageUrl: string | undefined = undefined;
@@ -789,13 +781,13 @@ export default function EditorView() {
   const handleSelectImage = (imageId: string) => {
     setSelectedImageId(imageId);
     selectImage(currentSceneIndex, imageId);
-    // When user selects an image, it becomes the seed image for next generation
-    const selectedImg = sceneImages.find((img: GeneratedImage) => img.id === imageId);
-    if (selectedImg && selectedImg.localPath) {
-      setSeedImageId(imageId);
-      // Sync with the global media drawer seed image (right panel)
-      updateMediaDrawer({ seedImageId: imageId });
-    }
+    // Don't automatically set as seed image - let user drag image to First Frame slot
+    // const selectedImg = sceneImages.find((img: GeneratedImage) => img.id === imageId);
+    // if (selectedImg && selectedImg.localPath) {
+    //   setSeedImageId(imageId);
+    //   // Sync with the global media drawer seed image (right panel)
+    //   updateMediaDrawer({ seedImageId: imageId });
+    // }
   };
 
   const handleRegenerateVideo = async () => {
@@ -822,13 +814,38 @@ export default function EditorView() {
     try {
       setSceneStatus(currentSceneIndex, 'generating_video');
 
-      // Seed frame logic removed - users now manually save last frame when needed
-      // Always use the selected image for video generation
-      if (!selectedImage) {
-        throw new Error('Please generate or select an image first');
+      // Use the First Frame slot (customImagePreviews[0]) for video generation
+      // This allows users to manually drag in the image they want to use
+      const firstFramePreview = customImagePreviews[0];
+      if (!firstFramePreview) {
+        throw new Error('Please drag an image to the First Frame slot to generate video');
       }
-      const imageToUse = selectedImage.localPath || selectedImage.url;
-      console.log(`[EditorView] Scene ${currentSceneIndex}: Using selected image for video generation`);
+
+      let imageToUse: string;
+      if (firstFramePreview.source === 'file') {
+        // If it's a file, we need to find it in customImageFiles
+        const fileIndex = customImagePreviews.slice(0, 1).filter(p => p?.source === 'file').length - 1;
+        const file = customImageFiles[fileIndex];
+        if (!file) {
+          throw new Error('First Frame file not found. Please try uploading again.');
+        }
+        // Upload the file first
+        const uploadResult = await uploadImages([file], project.id, false);
+        if (!uploadResult.images || uploadResult.images.length === 0) {
+          throw new Error('Failed to upload First Frame image');
+        }
+        imageToUse = uploadResult.images[0].url;
+      } else if (firstFramePreview.url.startsWith('http://') || firstFramePreview.url.startsWith('https://')) {
+        imageToUse = firstFramePreview.url;
+      } else if (firstFramePreview.url.startsWith('/api/serve-image')) {
+        // Extract the local path
+        imageToUse = decodeURIComponent(firstFramePreview.url.split('path=')[1]);
+      } else {
+        imageToUse = firstFramePreview.url;
+      }
+
+      console.log(`[EditorView] Scene ${currentSceneIndex}: Using First Frame slot for video generation`);
+      console.log('[EditorView] First Frame path:', imageToUse.substring(0, 100) + (imageToUse.length > 100 ? '...' : ''));
 
       // Upload image to S3 if it's a local path, otherwise use the URL directly
       let s3Url: string;
@@ -934,7 +951,15 @@ export default function EditorView() {
 
         const uploadedRefs = await Promise.all(referenceUploads);
         referenceImageUrls = uploadedRefs.filter((url): url is string => url !== null);
-        console.log(`[EditorView] Uploaded ${referenceImageUrls.length} reference images for video generation`);
+
+        // FALLBACK: If no custom reference images were provided, use the scene's referenceImageUrls
+        // This ensures AI-selected reference images from Brand Identity are used
+        if (referenceImageUrls.length === 0 && currentScene.referenceImageUrls && currentScene.referenceImageUrls.length > 0) {
+          console.log(`[EditorView] No custom reference images found, using ${currentScene.referenceImageUrls.length} scene reference images from Brand Identity`);
+          referenceImageUrls = currentScene.referenceImageUrls.slice(0, 3); // Limit to 3
+        }
+
+        console.log(`[EditorView] Using ${referenceImageUrls.length} reference images for video generation`);
       }
 
       // Generate video
@@ -951,11 +976,19 @@ export default function EditorView() {
           : `Reference Images (${referenceImageUrls.length} refs)`
       );
       console.log('[EditorView] Video generation parameters:', {
-        baseImage: s3Url,
+        baseImage: s3Url.substring(0, 80) + '...',
         mode: imageInputMode,
-        lastFrame: lastFrameUrl,
-        referenceImages: referenceImageUrls.length,
+        lastFrame: lastFrameUrl ? lastFrameUrl.substring(0, 80) + '...' : undefined,
+        referenceImagesCount: referenceImageUrls.length,
       });
+
+      // Log reference images in detail
+      if (referenceImageUrls.length > 0) {
+        console.log('[EditorView] Reference images being sent to video generation:');
+        referenceImageUrls.forEach((url, idx) => {
+          console.log(`  [${idx + 1}] ${url.substring(0, 100)}${url.length > 100 ? '...' : ''}`);
+        });
+      }
 
       const videoResponse = await generateVideo(
         s3Url, // Base image from selected image
@@ -1216,6 +1249,27 @@ export default function EditorView() {
       setDroppedImageUrls(prev => prev.filter((_, i) => i !== droppedIndex));
     }
 
+    // If removing slot 0 (First Frame), clear seedImageId for API preview
+    if (index === 0) {
+      setSeedImageId(null);
+      console.log('[EditorView] Cleared seedImageId (First Frame removed)');
+    }
+
+    // IMPORTANT: Update scene.referenceImageUrls if removing from slots 1, 2, 3
+    if (index >= 1 && index <= 3) {
+      const updatedReferenceUrls = [...(currentScene.referenceImageUrls || [])];
+
+      // Remove the URL at this slot (slots 1,2,3 map to array indices 0,1,2)
+      const arrayIndex = index - 1;
+      if (arrayIndex < updatedReferenceUrls.length) {
+        updatedReferenceUrls.splice(arrayIndex, 1);
+      }
+
+      // Update scene state
+      updateSceneSettings(currentSceneIndex, { referenceImageUrls: updatedReferenceUrls });
+      console.log('[EditorView] ✓ Updated scene.referenceImageUrls after removing slot', index, ':', updatedReferenceUrls);
+    }
+
     // Set slot to null instead of removing (maintains 4-slot structure)
     setCustomImagePreviews(prev => {
       const newPreviews = [...prev];
@@ -1246,8 +1300,11 @@ export default function EditorView() {
 
   // Find image URL from itemId and itemType (for drag and drop from media drawer)
   const findImageUrlFromItem = (itemId: string, itemType: 'image' | 'video' | 'frame'): string | null => {
+    console.log('[EditorView] findImageUrlFromItem called:', { itemId, itemType });
+
     if (itemType === 'video') {
       // Videos are not supported as image input
+      console.log('[EditorView] Item type is video, rejecting');
       return null;
     }
 
@@ -1256,38 +1313,49 @@ export default function EditorView() {
       const bgId = itemId.replace('public-bg-', '');
       const publicBg = publicBackgrounds.find(bg => bg.id === bgId);
       if (publicBg) {
-        return getPublicBackgroundUrl(publicBg.filename);
+        const url = getPublicBackgroundUrl(publicBg.filename);
+        console.log('[EditorView] Found public background:', url);
+        return url;
       }
     }
 
     // Search in generated images
+    console.log('[EditorView] Searching in generated images across', scenes.length, 'scenes');
     for (const scene of scenes) {
       if (scene.generatedImages) {
         const image = scene.generatedImages.find(img => img.id === itemId);
         if (image) {
           // Prefer localPath over url for consistency
-          return image.localPath || image.url || null;
+          const url = image.localPath || image.url || null;
+          console.log('[EditorView] Found in generated images:', url);
+          return url;
         }
       }
     }
 
     // Search in seed frames
+    console.log('[EditorView] Searching in seed frames');
     for (const scene of scenes) {
       if (scene.seedFrames) {
         const frame = scene.seedFrames.find(f => f.id === itemId);
         if (frame) {
           // Prefer localPath over url
-          return frame.localPath || frame.url || null;
+          const url = frame.localPath || frame.url || null;
+          console.log('[EditorView] Found in seed frames:', url);
+          return url;
         }
       }
     }
 
     // Search in uploaded images (Brand Assets)
+    console.log('[EditorView] Searching in uploaded images');
     if (project?.uploadedImages) {
       // Check original images
       const uploadedImage = project.uploadedImages.find(img => img.id === itemId);
       if (uploadedImage) {
-        return uploadedImage.localPath || uploadedImage.url || null;
+        const url = uploadedImage.localPath || uploadedImage.url || null;
+        console.log('[EditorView] Found in uploaded images:', url);
+        return url;
       }
 
       // Check processed versions
@@ -1295,18 +1363,23 @@ export default function EditorView() {
         if (uploadedImage.processedVersions) {
           const processed = uploadedImage.processedVersions.find(p => p.id === itemId);
           if (processed) {
-            return processed.localPath || processed.url || null;
+            const url = processed.localPath || processed.url || null;
+            console.log('[EditorView] Found in processed versions:', url);
+            return url;
           }
         }
       }
     }
 
     // Search in background images
+    console.log('[EditorView] Searching in background images');
     if (project?.backgroundImages) {
       // Check original background images
       const backgroundImage = project.backgroundImages.find(img => img.id === itemId);
       if (backgroundImage) {
-        return backgroundImage.localPath || backgroundImage.url || null;
+        const url = backgroundImage.localPath || backgroundImage.url || null;
+        console.log('[EditorView] Found in background images:', url);
+        return url;
       }
 
       // Check processed versions of backgrounds
@@ -1314,20 +1387,26 @@ export default function EditorView() {
         if (backgroundImage.processedVersions) {
           const processed = backgroundImage.processedVersions.find(p => p.id === itemId);
           if (processed) {
-            return processed.localPath || processed.url || null;
+            const url = processed.localPath || processed.url || null;
+            console.log('[EditorView] Found in processed background versions:', url);
+            return url;
           }
         }
       }
     }
 
     // Search in additional media
+    console.log('[EditorView] Searching in additional media');
     if (project?.additionalMedia) {
       const additionalMediaItem = project.additionalMedia.find(item => item.id === itemId);
       if (additionalMediaItem) {
-        return additionalMediaItem.localPath || additionalMediaItem.url || null;
+        const url = additionalMediaItem.localPath || additionalMediaItem.url || null;
+        console.log('[EditorView] Found in additional media:', url);
+        return url;
       }
     }
 
+    console.log('[EditorView] Image not found in any location');
     return null;
   };
 
@@ -1350,11 +1429,12 @@ export default function EditorView() {
       // Set as custom image preview
       // If it's a local path, convert to serveable URL for preview
       let previewUrl = imageUrl;
-      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/') && !imageUrl.startsWith('blob:')) {
+      if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://') && !imageUrl.startsWith('/api/') && !imageUrl.startsWith('blob:')) {
         previewUrl = `/api/serve-image?path=${encodeURIComponent(imageUrl)}`;
+        console.log('[EditorView] Converted local path to serve-image URL:', previewUrl);
+      } else {
+        console.log('[EditorView] Using URL as-is (already public or serve-image URL):', previewUrl.substring(0, 100));
       }
-
-      console.log('[EditorView] Preview URL:', previewUrl);
 
       const newPreviews = [...customImagePreviews];
 
@@ -1362,8 +1442,37 @@ export default function EditorView() {
       if (targetSlot !== undefined && targetSlot >= 0 && targetSlot <= 4) {
         // Replace the slot (overwrite existing if present)
         newPreviews[targetSlot] = { url: previewUrl, source: 'media' };
-        console.log('[EditorView] Set preview in target slot', targetSlot, newPreviews[targetSlot]);
+        console.log('[EditorView] Set preview in target slot', targetSlot, ':', previewUrl.substring(0, 100));
         setCustomImagePreviews(newPreviews);
+
+        // If dropping on slot 0 (First Frame for video generation), update seedImageId for API preview
+        if (targetSlot === 0 && itemType === 'image') {
+          setSeedImageId(itemId);
+          // Don't update mediaDrawer.seedImageId here - that's for image generation, not video
+          console.log('[EditorView] Updated seedImageId for First Frame (video generation):', itemId);
+        }
+
+        // IMPORTANT: Update scene.referenceImageUrls for slots 1, 2, 3
+        // This ensures the API call uses the dragged images
+        if (targetSlot >= 1 && targetSlot <= 3) {
+          const updatedReferenceUrls = [...(currentScene.referenceImageUrls || [])];
+
+          // Ensure array has enough slots
+          while (updatedReferenceUrls.length < 3) {
+            updatedReferenceUrls.push('');
+          }
+
+          // Update the specific slot (slots 1,2,3 map to array indices 0,1,2)
+          updatedReferenceUrls[targetSlot - 1] = imageUrl;
+
+          // Remove empty strings
+          const cleanedUrls = updatedReferenceUrls.filter(url => url && url.length > 0);
+
+          // Update scene state
+          updateSceneSettings(currentSceneIndex, { referenceImageUrls: cleanedUrls });
+          console.log('[EditorView] ✓ Updated scene.referenceImageUrls for slot', targetSlot, ':', cleanedUrls);
+        }
+
         return;
       }
 
@@ -1371,8 +1480,29 @@ export default function EditorView() {
       for (let i = 0; i < 5; i++) {
         if (!newPreviews[i]) {
           newPreviews[i] = { url: previewUrl, source: 'media' };
-          console.log('[EditorView] Set preview in first empty slot', i, newPreviews[i]);
+          console.log('[EditorView] Set preview in first empty slot', i, ':', previewUrl.substring(0, 100));
           setCustomImagePreviews(newPreviews);
+
+          // IMPORTANT: Update scene.referenceImageUrls for slots 1, 2, 3
+          if (i >= 1 && i <= 3) {
+            const updatedReferenceUrls = [...(currentScene.referenceImageUrls || [])];
+
+            // Ensure array has enough slots
+            while (updatedReferenceUrls.length < 3) {
+              updatedReferenceUrls.push('');
+            }
+
+            // Update the specific slot (slots 1,2,3 map to array indices 0,1,2)
+            updatedReferenceUrls[i - 1] = imageUrl;
+
+            // Remove empty strings
+            const cleanedUrls = updatedReferenceUrls.filter(url => url && url.length > 0);
+
+            // Update scene state
+            updateSceneSettings(currentSceneIndex, { referenceImageUrls: cleanedUrls });
+            console.log('[EditorView] ✓ Updated scene.referenceImageUrls for auto-assigned slot', i, ':', cleanedUrls);
+          }
+
           return;
         }
       }

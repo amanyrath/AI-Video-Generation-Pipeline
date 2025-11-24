@@ -86,14 +86,16 @@ export default function MediaDrawer() {
     loadPublicBackgrounds();
   }, []);
 
-  // Auto-filter by scene when on video or images tab
+  // Auto-filter by scene when on video or images tab (only if no scene is already selected)
   useEffect(() => {
     if (viewMode === 'video' || viewMode === 'images') {
-      // Automatically set scene filter to current scene
-      setFilter({
-        ...mediaDrawer.filters,
-        scene: currentSceneIndex,
-      });
+      // Automatically set scene filter to current scene only if not already set
+      if (mediaDrawer.filters.scene === undefined) {
+        setFilter({
+          ...mediaDrawer.filters,
+          scene: currentSceneIndex,
+        });
+      }
     } else {
       // Clear scene filter when not on video/images tabs
       if (mediaDrawer.filters.scene !== undefined) {
@@ -252,35 +254,38 @@ export default function MediaDrawer() {
 
   const seedFrames = useMemo(() => {
     const allFrames: MediaItem[] = [];
-    // Only show seed frames for the current scene
-    const currentScene = scenes[currentSceneIndex];
+    // Show seed frames from the previous scene (for use in current scene)
+    // For Scene 0, no previous scene exists, so no seed frames
+    if (currentSceneIndex > 0) {
+      const previousScene = scenes[currentSceneIndex - 1];
 
-    currentScene?.seedFrames?.forEach((frame) => {
-      // Always serve through API using localPath for consistent access
-      let frameUrl: string;
-      if (frame.localPath) {
-        frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath)}`;
-      } else if (frame.url.startsWith('/api')) {
-        frameUrl = frame.url;
-      } else if (!frame.url.startsWith('http://') && !frame.url.startsWith('https://')) {
-        frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.url)}`;
-      } else {
-        // For S3 URLs, use localPath if available
-        frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath || frame.url)}`;
-      }
+      previousScene?.seedFrames?.forEach((frame) => {
+        // Always serve through API using localPath for consistent access
+        let frameUrl: string;
+        if (frame.localPath) {
+          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath)}`;
+        } else if (frame.url.startsWith('/api')) {
+          frameUrl = frame.url;
+        } else if (!frame.url.startsWith('http://') && !frame.url.startsWith('https://')) {
+          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.url)}`;
+        } else {
+          // For S3 URLs, use localPath if available
+          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath || frame.url)}`;
+        }
 
-      allFrames.push({
-        id: frame.id,
-        type: 'frame' as const,
-        url: frameUrl,
-        sceneIndex: currentSceneIndex,
-        timestamp: frame.timestamp.toString(),
-        metadata: {
-          // Store full URL for preview modal
-          fullUrl: frameUrl,
-        },
+        allFrames.push({
+          id: frame.id,
+          type: 'frame' as const,
+          url: frameUrl,
+          sceneIndex: currentSceneIndex - 1, // Mark as from previous scene
+          timestamp: frame.timestamp.toString(),
+          metadata: {
+            // Store full URL for preview modal
+            fullUrl: frameUrl,
+          },
+        });
       });
-    });
+    }
 
     return allFrames;
   }, [scenes, currentSceneIndex]);
@@ -1113,13 +1118,12 @@ export default function MediaDrawer() {
               <select
                 value={mediaDrawer.filters.scene !== undefined ? mediaDrawer.filters.scene : ''}
                 onChange={(e) => handleFilter('scene', e.target.value ? parseInt(e.target.value) : undefined)}
-                className={`w-full px-3 py-1.5 text-xs bg-white/5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 focus:border-white/40 text-white backdrop-blur-sm ${
+                className={`w-full px-3 py-1.5 text-xs bg-white/5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 focus:border-white/40 text-white backdrop-blur-sm cursor-pointer ${
                   viewMode === 'video' || viewMode === 'images'
                     ? 'border-blue-500/50 bg-blue-500/10'
                     : 'border-white/20'
                 }`}
                 style={{ colorScheme: 'dark' }}
-                disabled={viewMode === 'video' || viewMode === 'images'}
               >
                 <option value="" className="bg-black text-white">All Scenes</option>
                 {project.storyboard.map((_, index) => (

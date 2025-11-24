@@ -178,9 +178,17 @@ export async function createVideoPrediction(
     console.log(`${logPrefix}   - Using Generated Image as Starting Image: ${imageUrl}`);
     console.log(`${logPrefix}   - Mode: Generated image → video (Scene 0)`);
   }
+  // Log model parameters
+  if (modelParameters?.last_frame) {
+    console.log(`${logPrefix}   - Interpolation Mode: Using last_frame`);
+    console.log(`${logPrefix}     Last Frame: ${modelParameters.last_frame.substring(0, 80)}...`);
+  }
   if (referenceImages && referenceImages.length > 0) {
     if (isVeo) {
-      console.log(`${logPrefix}   - Reference Images (Veo reference_images parameter): ${referenceImages.length}`);
+      console.log(`${logPrefix}   - Reference Images Mode (Veo reference_images parameter): ${referenceImages.length}`);
+      if (modelParameters?.last_frame) {
+        console.log(`${logPrefix}     ⚠️  WARNING: Both last_frame and reference_images are set - will use last_frame only`);
+      }
     } else {
       console.log(`${logPrefix}   - Reference Images: ${referenceImages.length}`);
     }
@@ -227,6 +235,9 @@ export async function createVideoPrediction(
   }
 
   // Start with model-specific parameters (user-provided)
+  // Check if we're using last_frame (interpolation mode)
+  const hasLastFrame = modelParameters?.last_frame !== undefined;
+
   const input: ReplicateInput = {
     // Gen-4 Aleph uses 'video', others use 'image'
     ...(isGen4Aleph ? {
@@ -238,10 +249,12 @@ export async function createVideoPrediction(
     // Add negative prompt if available
     ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
     // Add reference images for Google Veo models if provided
-    ...(isVeoModel && referenceImages && referenceImages.length > 0 ? { reference_images: referenceImages } : {}),
+    // IMPORTANT: Cannot use reference_images when last_frame is set (mutually exclusive modes)
+    ...(isVeoModel && !hasLastFrame && referenceImages && referenceImages.length > 0 ? { reference_images: referenceImages } : {}),
     // NOTE: last_frame parameter is handled via modelParameters (user-controlled)
-    // - When last_frame is NOT provided: Standard mode - generates video from single starting frame
-    // - When last_frame IS provided: Interpolation mode - generates transition between image and last_frame
+    // - When last_frame is NOT provided: Standard mode OR reference images mode
+    // - When last_frame IS provided: Interpolation mode (generates transition between image and last_frame)
+    // - last_frame and reference_images are MUTUALLY EXCLUSIVE
     // Model-specific parameters
     ...(isVeoModel ? {
       // Google Veo 3.1 parameters

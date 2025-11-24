@@ -200,6 +200,12 @@ export default function MediaGenerationView() {
       let seedFrameUrl: string | undefined = undefined;
       let currentSeedImageId: string | undefined = undefined;
 
+      console.log(`[MediaGenerationView] Scene ${currentSceneIndex + 1}: Initial reference images:`, {
+        hasReferenceImageUrls: !!currentScene.referenceImageUrls,
+        refCount: referenceImageUrls.length,
+        refs: referenceImageUrls
+      });
+
       const useSeedImage = currentScene?.modelParameters?.useSeedImage !== false;
 
       // Check for media drawer seed image
@@ -292,8 +298,14 @@ export default function MediaGenerationView() {
               seedImageUrl = seedFrameUrl;
             }
           }
+          // Fallback: If no seed frame from previous scene, use first reference image as seed (like Scene 0)
+          if (!seedImageUrl && referenceImageUrls.length > 0) {
+            seedImageUrl = referenceImageUrls[0];
+            console.log(`[MediaGenerationView] Scene ${currentSceneIndex + 1}: Using first reference image as seed image (fallback)`);
+          }
         } else if (referenceImageUrls.length > 0) {
           seedImageUrl = referenceImageUrls[0];
+          console.log(`[MediaGenerationView] Scene ${currentSceneIndex + 1}: Using first reference image as seed image`);
         }
       }
 
@@ -318,6 +330,13 @@ export default function MediaGenerationView() {
               // Brief delay before retry
               await new Promise(resolve => setTimeout(resolve, 1000));
             }
+
+            console.log(`[MediaGenerationView] Scene ${currentSceneIndex + 1}: Calling generateImage API with:`, {
+              hasSeedImage: !!seedImageUrl,
+              hasSeedFrame: !!seedFrameUrl,
+              refCount: referenceImageUrls.length,
+              refs: referenceImageUrls
+            });
 
             const response = await generateImage({
               prompt: editedPrompt || currentScene.imagePrompt,

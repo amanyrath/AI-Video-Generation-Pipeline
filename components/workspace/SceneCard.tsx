@@ -209,37 +209,43 @@ export default function SceneCard({
       // Check if we're using seed frame (last frame) mode
       const usingSeedFrame = sceneIndex > 0 && scene.useSeedFrame === true;
 
-      if (!usingSeedFrame) {
-        // Only add reference images if NOT using seed frame mode
-        // Priority 1: Use AI-selected per-scene reference images if available
-        if (scene.referenceImageUrls && scene.referenceImageUrls.length > 0) {
-          referenceImageUrls = scene.referenceImageUrls.slice(0, SCENE_CONSTANTS.MAX_REFERENCE_IMAGES);
+      console.log(`[SceneCard] Scene ${sceneIndex + 1}: Checking reference images:`, {
+        usingSeedFrame,
+        hasReferenceImageUrls: !!scene.referenceImageUrls,
+        refCount: scene.referenceImageUrls?.length || 0,
+        refs: scene.referenceImageUrls
+      });
+
+      // Always add reference images for IP-Adapter consistency, regardless of seed frame mode
+      // Seed frame (last frame from previous video) and reference images (for style consistency) are independent
+
+      // Priority 1: Use AI-selected per-scene reference images if available
+      if (scene.referenceImageUrls && scene.referenceImageUrls.length > 0) {
+        referenceImageUrls = scene.referenceImageUrls.slice(0, SCENE_CONSTANTS.MAX_REFERENCE_IMAGES);
+        console.log(
+          `[SceneCard] Scene ${sceneIndex + 1}: Using ${referenceImageUrls.length} AI-selected per-scene reference image(s):`, referenceImageUrls
+        );
+      } else {
+        console.warn(`[SceneCard] Scene ${sceneIndex + 1}: No AI-selected reference images found!`);
+      }
+
+      // Priority 2: Use reference image from scene composition box if available (only if Priority 1 failed)
+      if (scene.referenceImageId && referenceImageUrls.length === 0) {
+        const referenceImageUrl = findImageUrlById(scene.referenceImageId, searchContext);
+
+        if (referenceImageUrl) {
+          referenceImageUrls = [referenceImageUrl];
           console.log(
-            `[SceneCard] Scene ${sceneIndex}: Using ${referenceImageUrls.length} AI-selected per-scene reference image(s)`
+            `[SceneCard] Scene ${sceneIndex}: Using reference image from composition box:`,
+            referenceImageUrl.substring(0, 80) + '...'
+          );
+        } else {
+          console.warn(
+            `[SceneCard] Scene ${sceneIndex}: Reference image ID "${scene.referenceImageId}" not found`
           );
         }
-        // Priority 2: Use reference image from scene composition box if available
-        else if (scene.referenceImageId) {
-          const referenceImageUrl = findImageUrlById(scene.referenceImageId, searchContext);
-
-          if (referenceImageUrl) {
-            referenceImageUrls = [referenceImageUrl];
-            console.log(
-              `[SceneCard] Scene ${sceneIndex}: Using reference image from composition box:`,
-              referenceImageUrl.substring(0, 80) + '...'
-            );
-          } else {
-            console.warn(
-              `[SceneCard] Scene ${sceneIndex}: Reference image ID "${scene.referenceImageId}" not found`
-            );
-          }
-        }
-        // No project-level fallback - scenes should only use their own AI-selected references
-      } else {
-        console.log(
-          `[SceneCard] Scene ${sceneIndex}: Seed frame mode enabled - NOT including reference images`
-        );
       }
+      // No project-level fallback - scenes should only use their own AI-selected references
 
       // Get seed frame from previous scene (for Scenes 1-4, to use as seed image for image-to-image generation)
       let seedImageUrl: string | undefined = undefined;

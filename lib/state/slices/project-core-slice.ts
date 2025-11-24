@@ -338,14 +338,18 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
 
     if (uploadedImages && uploadedImages.length > 0) {
       console.log('[setStoryboard] Auto-analyzing all scenes for reference images');
+      console.log('[setStoryboard] Total scenes to analyze:', scenes.length);
+      console.log('[setStoryboard] Available reference images:', uploadedImages.length);
 
       // Analyze each scene asynchronously - use Promise.all to ensure all complete
       Promise.all(
         scenes.map(async (scene, index) => {
           const scenePrompt = scene.videoPrompt || scene.imagePrompt || scene.description || '';
+          console.log(`[setStoryboard] Scene ${index + 1}: Starting AI analysis with prompt:`, scenePrompt.substring(0, 100));
 
           try {
             const selectedUrls = await selectSceneReferenceImages(uploadedImages, scenePrompt);
+            console.log(`[setStoryboard] Scene ${index + 1}: AI selected ${selectedUrls.length} reference images:`, selectedUrls);
 
             // Update the scene with selected references
             const currentState = get();
@@ -367,7 +371,7 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
                   };
                 }
 
-                console.log(`[setStoryboard] ✅ Scene ${index + 1}: Auto-assigned ${selectedUrls.length} reference images`);
+                console.log(`[setStoryboard] ✅ Scene ${index + 1}: Auto-assigned ${selectedUrls.length} reference images to state`);
 
                 return {
                   project: {
@@ -387,15 +391,62 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
                     });
                 });
               }
+            } else {
+              console.error(`[setStoryboard] ❌ Scene ${index + 1}: Cannot update - scene not found in storyboard`);
             }
+
+            return { index, success: true, count: selectedUrls.length };
           } catch (error) {
-            console.error(`[setStoryboard] ❌ Failed to analyze scene ${index + 1}:`, error);
+            console.error(`[setStoryboard] ❌ Scene ${index + 1}: AI analysis failed:`, error);
+
+            // Fallback: Assign first 3 uploaded images as references
+            const fallbackUrls = uploadedImages.slice(0, 3).map(img => img.url);
+            console.log(`[setStoryboard] Scene ${index + 1}: Using fallback - assigning first ${fallbackUrls.length} uploaded images`);
+
+            const currentState = get();
+            if (currentState.project && currentState.project.storyboard[index]) {
+              set((s) => {
+                if (!s.project) return s;
+
+                const updatedStoryboard = [...s.project.storyboard];
+                updatedStoryboard[index] = {
+                  ...updatedStoryboard[index],
+                  referenceImageUrls: fallbackUrls,
+                };
+
+                const updatedScenes = [...s.scenes];
+                if (updatedScenes[index]) {
+                  updatedScenes[index] = {
+                    ...updatedScenes[index],
+                    referenceImageUrls: fallbackUrls,
+                  };
+                }
+
+                return {
+                  project: {
+                    ...s.project,
+                    storyboard: updatedStoryboard,
+                  },
+                  scenes: updatedScenes,
+                };
+              });
+            }
+
+            return { index, success: false, error: error };
           }
         })
-      ).then(() => {
-        console.log('[setStoryboard] ✅ All scene reference assignments completed');
+      ).then((results) => {
+        const successful = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success).length;
+        console.log(`[setStoryboard] ✅ Scene analysis complete: ${successful} succeeded, ${failed} failed`);
+
+        // Log final state for verification
+        const finalState = get();
+        finalState.project?.storyboard.forEach((scene, idx) => {
+          console.log(`[setStoryboard] Final - Scene ${idx + 1}: ${scene.referenceImageUrls?.length || 0} reference images`, scene.referenceImageUrls);
+        });
       }).catch((error) => {
-        console.error('[setStoryboard] ❌ Error during scene reference assignment:', error);
+        console.error('[setStoryboard] ❌ Critical error during scene analysis:', error);
       });
     }
   },
@@ -684,14 +735,61 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
                 });
               }
             }
+
+            return { index, success: true, count: selectedUrls.length };
           } catch (error) {
-            console.error(`[setUploadedImages] ❌ Failed to analyze scene ${index + 1}:`, error);
+            console.error(`[setUploadedImages] ❌ Scene ${index + 1}: AI analysis failed:`, error);
+
+            // Fallback: Assign first 3 uploaded images as references
+            const fallbackUrls = images.slice(0, 3).map(img => img.url);
+            console.log(`[setUploadedImages] Scene ${index + 1}: Using fallback - assigning first ${fallbackUrls.length} uploaded images`);
+
+            const currentState = get();
+            if (currentState.project && currentState.project.storyboard[index]) {
+              set((s) => {
+                if (!s.project) return s;
+
+                const updatedStoryboard = [...s.project.storyboard];
+                updatedStoryboard[index] = {
+                  ...updatedStoryboard[index],
+                  referenceImageUrls: fallbackUrls,
+                };
+
+                const updatedScenes = [...s.scenes];
+                if (updatedScenes[index]) {
+                  updatedScenes[index] = {
+                    ...updatedScenes[index],
+                    referenceImageUrls: fallbackUrls,
+                  };
+                }
+
+                console.log(`[setUploadedImages] ✅ Scene ${index + 1}: Assigned ${fallbackUrls.length} fallback references`);
+
+                return {
+                  project: {
+                    ...s.project,
+                    storyboard: updatedStoryboard,
+                  },
+                  scenes: updatedScenes,
+                };
+              });
+            }
+
+            return { index, success: false, error: error };
           }
         })
-      ).then(() => {
-        console.log('[setUploadedImages] ✅ All scene reference assignments completed');
+      ).then((results) => {
+        const successful = results.filter(r => r?.success).length;
+        const failed = results.filter(r => r && !r.success).length;
+        console.log(`[setUploadedImages] ✅ Scene analysis complete: ${successful} succeeded, ${failed} failed`);
+
+        // Log final state for verification
+        const finalState = get();
+        finalState.project?.storyboard.forEach((scene, idx) => {
+          console.log(`[setUploadedImages] Final - Scene ${idx + 1}: ${scene.referenceImageUrls?.length || 0} reference images`, scene.referenceImageUrls);
+        });
       }).catch((error) => {
-        console.error('[setUploadedImages] ❌ Error during scene reference assignment:', error);
+        console.error('[setUploadedImages] ❌ Critical error during scene analysis:', error);
       });
     } else {
       console.warn('[setUploadedImages] ❌ Conditions not met for AI analysis:', {
