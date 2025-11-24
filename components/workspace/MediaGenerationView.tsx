@@ -396,7 +396,8 @@ export default function MediaGenerationView() {
                 updated[index] = {
                   ...updated[index],
                   status: 'succeeded',
-                  image: statusResponse.image,
+                  // Don't store image here - it causes placeholder to disappear
+                  // The image is already in sceneImages via addGeneratedImage above
                 };
                 return updated;
               });
@@ -445,25 +446,26 @@ export default function MediaGenerationView() {
 
       await Promise.all(imagePromises);
       setSceneStatus(currentSceneIndex, 'image_ready');
+
+      // After all images are done, clear the generating state
+      // This allows the newly generated images from sceneImages to be displayed
+      console.log('[MediaGenerationView] All images generated, clearing generatingImages state');
+      setGeneratingImages([]);
     } catch (error) {
       console.error('Error generating images:', error);
+      // Also clear on error
+      setGeneratingImages([]);
     } finally {
       setIsGeneratingImage(false);
-      // Clear generating images state after all images are done
-      // This prevents the placeholder boxes from lingering
-      setTimeout(() => {
-        setGeneratingImages([]);
-      }, 500);
     }
   };
 
   const handleSelectImage = (imageId: string) => {
     setSelectedImageId(imageId);
     selectImage(currentSceneIndex, imageId);
-    const selectedImg = sceneImages.find((img: GeneratedImage) => img.id === imageId);
-    if (selectedImg && selectedImg.localPath) {
-      setSeedImageId(imageId);
-    }
+    // Don't automatically set as seed image - only set seed image when:
+    // 1. Explicitly selected from media drawer, OR
+    // 2. Actually used during generation (set in handleGenerateImage)
   };
 
   const handleRegenerateImage = async () => {
