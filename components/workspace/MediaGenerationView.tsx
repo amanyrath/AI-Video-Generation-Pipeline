@@ -449,6 +449,11 @@ export default function MediaGenerationView() {
       console.error('Error generating images:', error);
     } finally {
       setIsGeneratingImage(false);
+      // Clear generating images state after all images are done
+      // This prevents the placeholder boxes from lingering
+      setTimeout(() => {
+        setGeneratingImages([]);
+      }, 500);
     }
   };
 

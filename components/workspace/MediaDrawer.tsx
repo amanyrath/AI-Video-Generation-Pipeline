@@ -1,7 +1,6 @@
 'use client';
 
 import { useProjectStore } from '@/lib/state/project-store';
-import { GeneratedImage, SeedFrame } from '@/lib/types';
 import { Image as ImageIcon, Video, Search, Filter, ChevronDown, ChevronRight, X, Upload } from 'lucide-react';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useMediaDragDrop } from '@/lib/hooks/useMediaDragDrop';
