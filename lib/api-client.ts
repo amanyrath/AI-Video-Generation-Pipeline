@@ -82,26 +82,24 @@ export interface APIError {
 /**
  * Converts a Response error to an Error object while preserving status code
  */
-function createErrorFromResponse(
+async function createErrorFromResponse(
   response: Response,
   defaultMessage: string,
-): Error {
+): Promise<Error> {
   // Try to extract error message from JSON response
-  return response
-    .json()
-    .then((errorData) => {
-      const error = new Error(errorData.error || defaultMessage);
-      (error as any).status = response.status;
-      (error as any).response = response;
-      return error;
-    })
-    .catch(() => {
-      // If JSON parsing fails, create error with status code
-      const error = new Error(defaultMessage);
-      (error as any).status = response.status;
-      (error as any).response = response;
-      return error;
-    });
+  try {
+    const errorData = await response.json();
+    const error = new Error(errorData.error || defaultMessage);
+    (error as any).status = response.status;
+    (error as any).response = response;
+    return error;
+  } catch {
+    // If JSON parsing fails, create error with status code
+    const error = new Error(defaultMessage);
+    (error as any).status = response.status;
+    (error as any).response = response;
+    return error;
+  }
 }
 
 /**
