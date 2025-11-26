@@ -129,13 +129,18 @@ function validateAndAdjustDuration(duration: number, model: string): number {
  * @returns Prediction ID
  */
 export async function createVideoPrediction(
-  imageUrl: string,
+  imageUrl: string | undefined,
   prompt: string,
   seedFrame?: string,
   duration?: number,
   referenceImages?: string[],
   modelParameters?: Record<string, any>
 ): Promise<string> {
+  // Validate inputs - imageUrl is optional if modelParameters.last_frame is provided
+  if (imageUrl && (typeof imageUrl !== 'string' || imageUrl.trim() === '')) {
+    throw new Error('Image URL must be a non-empty string if provided');
+  }
+
   // Validate prompt (required always)
   if (!prompt || typeof prompt !== 'string' || prompt.trim() === '') {
     throw new Error('Prompt is required and must be a non-empty string');
@@ -183,9 +188,11 @@ export async function createVideoPrediction(
     console.log(`${logPrefix}   - Reference Images: ${referenceImages.length}`);
   } else if (seedFrame) {
     console.log(`${logPrefix}   - Using Seed Frame as Starting Image: ${seedFrame}`);
-    console.log(`${logPrefix}   - Generated Image (not used): ${imageUrl}`);
+    if (imageUrl) {
+      console.log(`${logPrefix}   - Generated Image (not used): ${imageUrl}`);
+    }
     console.log(`${logPrefix}   - Mode: Seed frame from previous scene → video`);
-  } else {
+  } else if (imageUrl) {
     console.log(`${logPrefix}   - Using Generated Image as Starting Image: ${imageUrl}`);
     console.log(`${logPrefix}   - Mode: Generated image → video (Scene 0)`);
   }
@@ -255,14 +262,15 @@ export async function createVideoPrediction(
   const input: ReplicateInput = {
     // Gen-4 Aleph uses 'video', others use 'image'
     // IMPORTANT: For Google Veo in reference images mode, we should NOT include the image parameter
-    ...(isGen4Aleph ? {
+    // Only include image/video if inputImageUrl is provided
+    ...(inputImageUrl ? (isGen4Aleph ? {
       video: inputImageUrl, // For Gen-4 Aleph, this should be a video URL
     } : useReferenceImagesMode ? {
       // Reference images mode: NO image parameter, only reference_images
     } : {
       // Standard mode: include image parameter
       image: inputImageUrl,
-    }),
+    }) : {}),
     prompt: enhancedPrompt.trim(),
     // Add negative prompt if available
     ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
@@ -403,7 +411,7 @@ async function retryWithBackoff<T>(
  * Creates a video prediction with retry logic
  */
 export async function createVideoPredictionWithRetry(
-  imageUrl: string,
+  imageUrl: string | undefined,
   prompt: string,
   seedFrame?: string,
   duration?: number,
@@ -595,7 +603,7 @@ async function downloadVideoWithRetry(
  * @throws Error if video generation fails, times out, or download fails
  */
 export async function generateVideo(
-  imageUrl: string,
+  imageUrl: string | undefined,
   prompt: string,
   seedFrame: string | undefined,
   projectId: string,
@@ -603,9 +611,8 @@ export async function generateVideo(
   sceneId?: string
 ): Promise<{ localPath: string; s3Url: string; s3Key?: string; storedFile: StoredFile }> {
   // Validate inputs
-  if (!imageUrl) {
-    throw new Error('Image URL is required');
-  }
+  // Note: imageUrl is optional when using reference images mode or last_frame only mode
+  // The createVideoPrediction function will validate based on the actual mode
 
   if (!prompt) {
     throw new Error('Prompt is required');
