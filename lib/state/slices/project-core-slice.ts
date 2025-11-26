@@ -289,34 +289,91 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
     const state = get();
     if (!state.project) return;
 
+    // Always update local state first for immediate UI feedback
+    set((state) => {
+      if (!state.project) return state;
+      const updatedProject = { ...state.project };
+      if (updates.name !== undefined) updatedProject.name = updates.name;
+      if (updates.characterDescription !== undefined) updatedProject.characterDescription = updates.characterDescription;
+      if (updates.status !== undefined) updatedProject.status = updates.status;
+      if (updates.finalVideoUrl !== undefined) updatedProject.finalVideoUrl = updates.finalVideoUrl;
+      if (updates.finalVideoS3Key !== undefined) updatedProject.finalVideoS3Key = updates.finalVideoS3Key;
+      if (updates.targetDuration !== undefined) updatedProject.targetDuration = updates.targetDuration;
+      return { project: updatedProject };
+    });
+
+    // Try to sync to backend
     try {
       const { updateProject } = await import('@/lib/api-client');
       await updateProject(state.project.id, updates);
-
-      set((state) => {
-        if (!state.project) return state;
-        const updatedProject = { ...state.project };
-        if (updates.name !== undefined) updatedProject.name = updates.name;
-        if (updates.characterDescription !== undefined) updatedProject.characterDescription = updates.characterDescription;
-        if (updates.status !== undefined) updatedProject.status = updates.status;
-        if (updates.finalVideoUrl !== undefined) updatedProject.finalVideoUrl = updates.finalVideoUrl;
-        if (updates.finalVideoS3Key !== undefined) updatedProject.finalVideoS3Key = updates.finalVideoS3Key;
-        if (updates.targetDuration !== undefined) updatedProject.targetDuration = updates.targetDuration;
-        return { project: updatedProject };
-      });
-
-      console.log('[Store] Project metadata saved to backend');
-    } catch (error) {
-      console.error('[Store] Failed to update project metadata:', error);
-      throw error;
+      console.log('[Store] Project metadata synced to backend');
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error);
+      
+      // If project not found (it's local-only), that's expected - don't throw
+      if (errorMessage.includes('not found') || errorMessage.includes('No record was found')) {
+        console.log('[Store] Project is local-only (not yet saved to backend)');
+        return; // Success - local update is sufficient
+      }
+      
+      // For other errors, log as warning but don't throw
+      // This allows work to continue even if backend is temporarily unavailable
+      console.warn('[Store] Failed to sync project metadata to backend:', errorMessage);
+      console.warn('[Store] Changes saved locally only - will sync when backend is available');
+      
+      // Don't throw - we've successfully updated local state
+      // The project will sync when saveProjectToBackend is called
     }
   },
 
-  setStoryboard: (scenes) => {
-    set((state) => {
-      if (!state.project) return state;
+  setStoryboard: async (scenes) => {
+    const state = get();
+    if (!state.project) return;
 
-      const scenesWithState: SceneWithState[] = scenes.map((scene) => ({
+    // Check if scenes need to be created in the database (they don't have IDs)
+    const needsDatabaseCreation = scenes.length > 0 && !scenes[0].id;
+    let scenesWithIds = scenes;
+
+    if (needsDatabaseCreation && state.project.id) {
+      console.log('[setStoryboard] Creating', scenes.length, 'scenes in database for project', state.project.id);
+      
+      try {
+        // Prepare scene data for database
+        const sceneData = scenes.map((scene, index) => ({
+          sceneNumber: index + 1,
+          sceneTitle: scene.description || `Scene ${index + 1}`,
+          sceneSummary: scene.description || '',
+          imagePrompt: scene.imagePrompt || '',
+          videoPrompt: scene.videoPrompt || scene.imagePrompt || '',
+          suggestedDuration: scene.suggestedDuration || 4,
+          negativePrompt: scene.negativePrompt,
+          customDuration: scene.customDuration,
+          customImageInput: scene.customImageInput,
+          useSeedFrame: scene.useSeedFrame || false,
+        }));
+
+        // Create scenes in database
+        const { createScenes } = await import('@/lib/api-client');
+        const response = await createScenes(state.project.id, sceneData);
+        
+        if (response.scenes) {
+          console.log('[setStoryboard] ✅ Created', response.scenes.length, 'scenes in database');
+          // Merge database IDs back into the scenes
+          scenesWithIds = scenes.map((scene, index) => ({
+            ...scene,
+            id: response.scenes[index]?.id || scene.id,
+          }));
+        }
+      } catch (error) {
+        console.error('[setStoryboard] ❌ Failed to create scenes in database:', error);
+        // Continue with scenes without IDs - they'll be created later when needed
+      }
+    }
+
+    set((currentState) => {
+      if (!currentState.project) return currentState;
+
+      const scenesWithState: SceneWithState[] = scenesWithIds.map((scene) => ({
         ...scene,
         generatedImages: [],
         status: 'pending',
@@ -324,8 +381,8 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
 
       return {
         project: {
-          ...state.project,
-          storyboard: scenes,
+          ...currentState.project,
+          storyboard: scenesWithIds,
           status: 'SCENE_GENERATION',
         },
         scenes: scenesWithState,
@@ -333,17 +390,17 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
     });
 
     // Automatically analyze and assign reference images to all scenes
-    const state = get();
-    const uploadedImages = state.project?.uploadedImages;
+    const updatedState = get();
+    const uploadedImages = updatedState.project?.uploadedImages;
 
     if (uploadedImages && uploadedImages.length > 0) {
       console.log('[setStoryboard] Auto-analyzing all scenes for reference images');
-      console.log('[setStoryboard] Total scenes to analyze:', scenes.length);
+      console.log('[setStoryboard] Total scenes to analyze:', scenesWithIds.length);
       console.log('[setStoryboard] Available reference images:', uploadedImages.length);
 
       // Analyze each scene asynchronously - use Promise.all to ensure all complete
       Promise.all(
-        scenes.map(async (scene, index) => {
+        scenesWithIds.map(async (scene, index) => {
           const scenePrompt = scene.videoPrompt || scene.imagePrompt || scene.description || '';
           console.log(`[setStoryboard] Scene ${index + 1}: Starting AI analysis with prompt:`, scenePrompt.substring(0, 100));
 
@@ -390,6 +447,8 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
                       console.error(`[setStoryboard] ❌ Failed to persist references for scene ${index + 1}:`, error);
                     });
                 });
+              } else {
+                console.warn(`[setStoryboard] Scene ${index + 1}: No ID - skipping database persistence`);
               }
             } else {
               console.error(`[setStoryboard] ❌ Scene ${index + 1}: Cannot update - scene not found in storyboard`);
@@ -501,6 +560,54 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
     });
   },
 
+  moveScene: (sceneIndex, direction) => {
+    set((state) => {
+      if (!state.project || !state.project.storyboard) return state;
+
+      const storyboard = state.project.storyboard;
+      const scenes = state.scenes;
+
+      // Validate bounds
+      if (direction === 'up' && sceneIndex === 0) return state;
+      if (direction === 'down' && sceneIndex === storyboard.length - 1) return state;
+
+      // Calculate swap indices
+      const targetIndex = direction === 'up' ? sceneIndex - 1 : sceneIndex + 1;
+
+      // Create new arrays with swapped scenes
+      const newStoryboard = [...storyboard];
+      const newScenes = [...scenes];
+
+      // Swap in storyboard
+      [newStoryboard[sceneIndex], newStoryboard[targetIndex]] = 
+        [newStoryboard[targetIndex], newStoryboard[sceneIndex]];
+
+      // Swap in scenes
+      [newScenes[sceneIndex], newScenes[targetIndex]] = 
+        [newScenes[targetIndex], newScenes[sceneIndex]];
+
+      // Renumber ALL scenes sequentially (0, 1, 2, 3...)
+      newStoryboard.forEach((scene, idx) => {
+        scene.order = idx;
+      });
+
+      newScenes.forEach((scene, idx) => {
+        scene.order = idx;
+      });
+
+      return {
+        project: {
+          ...state.project,
+          storyboard: newStoryboard,
+        },
+        scenes: newScenes,
+      };
+    });
+
+    // Rebuild timeline with new scene order
+    get().initializeTimelineClips();
+  },
+
   loadProject: async (projectId) => {
     try {
       const { loadProject: loadProjectAPI } = await import('@/lib/api-client');
@@ -513,6 +620,16 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
         seedFrames: scene.seedFrames || [],
         status: 'image_ready' as const,
       }));
+
+      console.log('[loadProject] Loaded project with scenes:', {
+        totalScenes: scenesWithState.length,
+        scenes: scenesWithState.map((s, i) => ({
+          index: i,
+          id: s.id,
+          imageCount: s.generatedImages?.length || 0,
+          videoCount: s.generatedVideos?.length || 0,
+        })),
+      });
 
       set({
         project: {

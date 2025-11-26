@@ -18,18 +18,19 @@ interface MediaItem {
 
 // Helper to add thumbnail query param to image URLs
 function getThumbnailUrl(url: string, size: 'small' | 'medium' | 'large' = 'small'): string {
-  // For S3 URLs, proxy through serve-image API for thumbnail generation
+  // For S3/remote URLs (http/https), proxy through serve-image with ?url= parameter for thumbnail
   if (url.startsWith('http://') || url.startsWith('https://')) {
-    // S3 URL - proxy through serve-image for thumbnail
     return `/api/serve-image?url=${encodeURIComponent(url)}&thumb=${size}`;
   }
 
-  // Only add thumbnail param to serve-image API URLs
+  // For serve-image API URLs, add thumbnail param
   if (url.includes('/api/serve-image')) {
     const separator = url.includes('?') ? '&' : '?';
     return `${url}${separator}thumb=${size}`;
   }
-  return url;
+  
+  // For local paths, proxy through serve-image with ?path= parameter
+  return `/api/serve-image?path=${encodeURIComponent(url)}&thumb=${size}`;
 }
 
 export default function MediaDrawer() {
@@ -169,14 +170,17 @@ export default function MediaDrawer() {
         // S3 URLs may not be publicly accessible, so we proxy through our API
         let imageUrl: string;
         if (img.localPath) {
+          // Use local path if available
           imageUrl = `/api/serve-image?path=${encodeURIComponent(img.localPath)}`;
         } else if (img.url.startsWith('/api')) {
+          // Already an API URL
           imageUrl = img.url;
-        } else if (!img.url.startsWith('http://') && !img.url.startsWith('https://')) {
-          imageUrl = `/api/serve-image?path=${encodeURIComponent(img.url)}`;
+        } else if (img.url.startsWith('http://') || img.url.startsWith('https://')) {
+          // Remote URL (S3, Replicate, etc.) - proxy through our API using 'url' parameter
+          imageUrl = `/api/serve-image?url=${encodeURIComponent(img.url)}`;
         } else {
-          // For external URLs (including S3), still try to use localPath if available
-          imageUrl = `/api/serve-image?path=${encodeURIComponent(img.localPath || img.url)}`;
+          // Relative path - treat as local file
+          imageUrl = `/api/serve-image?path=${encodeURIComponent(img.url)}`;
         }
 
         allImages.push({
@@ -192,6 +196,16 @@ export default function MediaDrawer() {
           },
         });
       });
+    });
+    console.log('[MediaDrawer] Generated images loaded:', {
+      totalImages: allImages.length,
+      totalScenes: scenes.length,
+      byScene: scenes.map((s, i) => ({ 
+        scene: i, 
+        count: s.generatedImages?.length || 0,
+        images: s.generatedImages?.map(img => ({ id: img.id, url: img.url?.substring(0, 80) })) || []
+      })),
+      allImagesDetails: allImages.map(img => ({ id: img.id, sceneIndex: img.sceneIndex, url: img.url?.substring(0, 80) }))
     });
     return allImages;
   }, [scenes]);
@@ -253,38 +267,38 @@ export default function MediaDrawer() {
 
   const seedFrames = useMemo(() => {
     const allFrames: MediaItem[] = [];
-    // Show seed frames from the previous scene (for use in current scene)
-    // For Scene 0, no previous scene exists, so no seed frames
-    if (currentSceneIndex > 0) {
-      const previousScene = scenes[currentSceneIndex - 1];
-
-      previousScene?.seedFrames?.forEach((frame) => {
-        // Always serve through API using localPath for consistent access
-        let frameUrl: string;
-        if (frame.localPath) {
-          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath)}`;
-        } else if (frame.url.startsWith('/api')) {
-          frameUrl = frame.url;
-        } else if (!frame.url.startsWith('http://') && !frame.url.startsWith('https://')) {
-          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.url)}`;
-        } else {
-          // For S3 URLs, use localPath if available
-          frameUrl = `/api/serve-image?path=${encodeURIComponent(frame.localPath || frame.url)}`;
-        }
-
+    
+    // Helper to get frame URL - use S3 URLs directly, only proxy local paths
+    const getFrameUrl = (frame: { url: string; localPath?: string }): string => {
+      // If URL is already HTTP(S), use directly
+      if (frame.url.startsWith('http://') || frame.url.startsWith('https://')) {
+        return frame.url;
+      }
+      // If URL is already an API path, use directly
+      if (frame.url.startsWith('/api')) {
+        return frame.url;
+      }
+      // For local paths, proxy through serve-image
+      const pathToServe = frame.localPath || frame.url;
+      return `/api/serve-image?path=${encodeURIComponent(pathToServe)}`;
+    };
+    
+    // Show seed frames from ALL scenes (not just current and previous)
+    scenes.forEach((scene, sceneIdx) => {
+      scene?.seedFrames?.forEach((frame) => {
+        const frameUrl = getFrameUrl(frame);
         allFrames.push({
           id: frame.id,
           type: 'frame' as const,
           url: frameUrl,
-          sceneIndex: currentSceneIndex - 1, // Mark as from previous scene
-          timestamp: frame.timestamp.toString(),
+          sceneIndex: sceneIdx,  // Mark which scene it came from
+          timestamp: frame.timestamp?.toString() || '0',
           metadata: {
-            // Store full URL for preview modal
             fullUrl: frameUrl,
           },
         });
       });
-    }
+    });
 
     return allFrames;
   }, [scenes, currentSceneIndex]);
@@ -334,14 +348,17 @@ export default function MediaDrawer() {
         // Add all processed versions with labels
         if (uploadedImage.processedVersions && uploadedImage.processedVersions.length > 0) {
           uploadedImage.processedVersions.forEach((processed) => {
-            // Always serve through API using localPath
+            // Serve through API using appropriate parameter
             let processedUrl: string;
-            if (processed.localPath) {
+            if (processed.url.startsWith('http://') || processed.url.startsWith('https://')) {
+              // S3 or external URL - use directly
+              processedUrl = processed.url;
+            } else if (processed.localPath) {
               processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.localPath)}`;
             } else if (processed.url.startsWith('/api')) {
               processedUrl = processed.url;
             } else {
-              processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.localPath || processed.url)}`;
+              processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.url)}`;
             }
             
             // Determine label based on iteration number
@@ -386,11 +403,11 @@ export default function MediaDrawer() {
       let imageUrl: string;
       if (url.startsWith('/api')) {
         imageUrl = url;
-      } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        imageUrl = `/api/serve-image?path=${encodeURIComponent(url)}`;
+      } else if (url.startsWith('http://') || url.startsWith('https://')) {
+        // S3 or external URL - use directly
+        imageUrl = url;
       } else {
-        // For S3 or external URLs, try to proxy through API
-        // Note: This may fail if localPath isn't available
+        // Local path - proxy through serve-image
         imageUrl = `/api/serve-image?path=${encodeURIComponent(url)}`;
       }
       refs.push({
@@ -507,14 +524,17 @@ export default function MediaDrawer() {
         // Add all processed versions with labels
         if (backgroundImage.processedVersions && backgroundImage.processedVersions.length > 0) {
           backgroundImage.processedVersions.forEach((processed) => {
-            // Always serve through API using localPath
+            // Serve through API using appropriate parameter
             let processedUrl: string;
-            if (processed.localPath) {
+            if (processed.url.startsWith('http://') || processed.url.startsWith('https://')) {
+              // S3 or external URL - use directly
+              processedUrl = processed.url;
+            } else if (processed.localPath) {
               processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.localPath)}`;
             } else if (processed.url.startsWith('/api')) {
               processedUrl = processed.url;
             } else {
-              processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.localPath || processed.url)}`;
+              processedUrl = `/api/serve-image?path=${encodeURIComponent(processed.url)}`;
             }
 
             // Determine label based on iteration number

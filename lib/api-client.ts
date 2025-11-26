@@ -180,6 +180,8 @@ export async function generateStoryboard(
   prompt: string,
   targetDuration: number = 15,
   referenceImageUrls?: string[],
+  assetDescription?: string,
+  color?: string,
 ): Promise<StoryboardResponse> {
   const url = `${API_BASE_URL}/api/storyboard`;
   return retryRequest(
@@ -195,6 +197,8 @@ export async function generateStoryboard(
           prompt,
           targetDuration,
           referenceImageUrls,
+          assetDescription,
+          color,
         } as StoryboardRequest),
       });
 
@@ -390,13 +394,13 @@ export async function pollImageStatus(
   } = {},
 ): Promise<ImageStatusResponse> {
   const {
-    interval = 2000,
-    timeout = 300000,
+    interval = 1000, // OPTIMIZED: 2000ms → 1000ms for faster detection
+    timeout = 600000,
     projectId,
     sceneIndex,
     prompt,
     onProgress,
-  } = options; // 5 min default timeout
+  } = options; // 10 min default timeout
   const startTime = Date.now();
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 3;
@@ -606,12 +610,12 @@ export async function pollVideoStatus(
   error?: string;
 }> {
   const {
-    interval = 5000,
-    timeout = 600000,
+    interval = 3000, // OPTIMIZED: 5000ms → 3000ms for faster detection
+    timeout = 1200000,
     onProgress,
     projectId,
     sceneIndex,
-  } = options; // 10 min default timeout
+  } = options; // 20 min default timeout
   const startTime = Date.now();
 
   return new Promise((resolve, reject) => {
@@ -1441,7 +1445,7 @@ export async function pollMusicStatus(
     onProgress?: (status: MusicStatusResponse) => void;
   } = {},
 ): Promise<MusicStatusResponse> {
-  const { interval = 3000, timeout = 180000, projectId, onProgress } = options;
+  const { interval = 3000, timeout = 360000, projectId, onProgress } = options;
   const startTime = Date.now();
 
   return new Promise((resolve, reject) => {
@@ -1621,6 +1625,32 @@ export async function getNarrationServiceStatus(): Promise<NarrationServiceStatu
   }
 
   return response.json();
+}
+
+/**
+ * Create scenes in the database for a project
+ */
+export async function createScenes(
+  projectId: string,
+  scenes: any[]
+): Promise<{ success: boolean; scenes: any[] }> {
+  return retryRequest(async () => {
+    const response = await fetch(`${API_BASE_URL}/api/projects/${projectId}/scenes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify(scenes),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to create scenes' }));
+      throw new Error(error.error || 'Failed to create scenes');
+    }
+
+    return response.json();
+  });
 }
 
 /**

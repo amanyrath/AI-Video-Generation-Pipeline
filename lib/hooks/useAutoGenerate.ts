@@ -35,6 +35,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
     setVideoPath,
     setSeedFrames,
     selectSeedFrame,
+    setGenerationState,
   } = useSceneStore();
   const { addChatMessage } = useUIStore();
 
@@ -212,20 +213,50 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
 
         const imageTasks = project.storyboard.map((scene, sceneIndex) => {
           return async () => {
-            try {
-              console.log(`[useAutoGenerate] Scene ${sceneIndex}: Starting image generation`);
-              const generatedImage = await generateImageForScene(sceneIndex);
-              console.log(`[useAutoGenerate] Scene ${sceneIndex}: ✓ Image generated`);
-              return { sceneIndex, image: generatedImage };
-            } catch (error) {
-              console.error(`[useAutoGenerate] Scene ${sceneIndex} image failed:`, error);
-              addChatMessage({
-                role: 'agent',
-                content: `❌ Scene ${sceneIndex + 1} image failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                type: 'error',
-              });
-              throw error;
+            // Attempt image generation with 1 retry
+            let lastError: Error | null = null;
+            for (let attempt = 1; attempt <= 2; attempt++) {
+              try {
+                console.log(`[useAutoGenerate] Scene ${sceneIndex}: Starting image generation (attempt ${attempt}/2)`);
+                const generatedImage = await generateImageForScene(sceneIndex);
+                console.log(`[useAutoGenerate] Scene ${sceneIndex}: ✓ Image generated`);
+                
+                if (attempt > 1) {
+                  addChatMessage({
+                    role: 'agent',
+                    content: `✓ Scene ${sceneIndex + 1} image generated (retry succeeded)`,
+                    type: 'status',
+                  });
+                }
+                
+                return { sceneIndex, image: generatedImage };
+              } catch (error) {
+                lastError = error instanceof Error ? error : new Error('Unknown error');
+                console.error(`[useAutoGenerate] Scene ${sceneIndex} image failed (attempt ${attempt}/2):`, lastError);
+                
+                if (attempt === 1) {
+                  // First attempt failed, notify user we're retrying
+                  addChatMessage({
+                    role: 'agent',
+                    content: `⚠️ Scene ${sceneIndex + 1} image failed, retrying...`,
+                    type: 'error',
+                  });
+                  // Small delay before retry
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                } else {
+                  // Second attempt failed, give up
+                  addChatMessage({
+                    role: 'agent',
+                    content: `❌ Scene ${sceneIndex + 1} image failed after retry: ${lastError.message}`,
+                    type: 'error',
+                  });
+                  throw lastError;
+                }
+              }
             }
+            
+            // Should never reach here, but TypeScript needs it
+            throw lastError || new Error('Image generation failed');
           };
         });
 
@@ -243,16 +274,20 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
           const errors = error.errors || [];
           const results = error.results || [];
           const successCount = results.filter((r: any) => r !== undefined).length;
+          const failedSceneNumbers = project.storyboard
+            .map((_, idx) => idx)
+            .filter(idx => !results[idx])
+            .map(idx => idx + 1);
 
           console.error(`[useAutoGenerate] Image generation partially failed: ${successCount}/${project.storyboard.length} succeeded`);
           addChatMessage({
             role: 'agent',
-            content: `⚠️ Image generation completed with errors: ${successCount}/${project.storyboard.length} scenes succeeded`,
+            content: `⚠️ Image generation completed with errors: ${successCount}/${project.storyboard.length} scenes succeeded. Scene${failedSceneNumbers.length > 1 ? 's' : ''} ${failedSceneNumbers.join(', ')} failed after retry.`,
             type: 'error',
           });
 
           // Stop the workflow - we can't proceed without images
-          throw new Error(`Image generation failed: Only ${successCount}/${project.storyboard.length} images generated successfully`);
+          throw new Error(`Image generation failed: Only ${successCount}/${project.storyboard.length} images generated successfully. Scene${failedSceneNumbers.length > 1 ? 's' : ''} ${failedSceneNumbers.join(', ')} failed.`);
         }
 
         const successfulImages = imageResults.filter((r: any) => r !== undefined).length;
@@ -271,35 +306,57 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
 
         const videoTasks = project.storyboard.map((scene, sceneIndex) => {
           return async () => {
-            try {
-              console.log(`[useAutoGenerate] Scene ${sceneIndex}: Starting video generation`);
-              const imageData = imageResults[sceneIndex];
+            const imageData = imageResults[sceneIndex];
 
-              // Skip if image generation failed for this scene
-              if (!imageData || !imageData.image) {
-                console.warn(`[useAutoGenerate] Scene ${sceneIndex}: Skipping video generation - no image available`);
-                throw new Error(`No image available for scene ${sceneIndex + 1}`);
-              }
-
-              await generateVideoForScene(sceneIndex, imageData.image);
-              console.log(`[useAutoGenerate] Scene ${sceneIndex}: ✓ Video generated`);
-
-              addChatMessage({
-                role: 'agent',
-                content: `✓ Scene ${sceneIndex + 1} completed`,
-                type: 'status',
-              });
-
-              return { sceneIndex, success: true };
-            } catch (error) {
-              console.error(`[useAutoGenerate] Scene ${sceneIndex} video failed:`, error);
-              addChatMessage({
-                role: 'agent',
-                content: `❌ Scene ${sceneIndex + 1} video failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                type: 'error',
-              });
-              throw error;
+            // Skip if image generation failed for this scene
+            if (!imageData || !imageData.image) {
+              console.warn(`[useAutoGenerate] Scene ${sceneIndex}: Skipping video generation - no image available`);
+              throw new Error(`No image available for scene ${sceneIndex + 1}`);
             }
+
+            // Attempt video generation with 1 retry
+            let lastError: Error | null = null;
+            for (let attempt = 1; attempt <= 2; attempt++) {
+              try {
+                console.log(`[useAutoGenerate] Scene ${sceneIndex}: Starting video generation (attempt ${attempt}/2)`);
+                
+                await generateVideoForScene(sceneIndex, imageData.image);
+                console.log(`[useAutoGenerate] Scene ${sceneIndex}: ✓ Video generated`);
+
+                addChatMessage({
+                  role: 'agent',
+                  content: `✓ Scene ${sceneIndex + 1} completed${attempt > 1 ? ' (retry succeeded)' : ''}`,
+                  type: 'status',
+                });
+
+                return { sceneIndex, success: true };
+              } catch (error) {
+                lastError = error instanceof Error ? error : new Error('Unknown error');
+                console.error(`[useAutoGenerate] Scene ${sceneIndex} video failed (attempt ${attempt}/2):`, lastError);
+                
+                if (attempt === 1) {
+                  // First attempt failed, notify user we're retrying
+                  addChatMessage({
+                    role: 'agent',
+                    content: `⚠️ Scene ${sceneIndex + 1} video failed, retrying...`,
+                    type: 'error',
+                  });
+                  // Small delay before retry
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                } else {
+                  // Second attempt failed, give up
+                  addChatMessage({
+                    role: 'agent',
+                    content: `❌ Scene ${sceneIndex + 1} video failed after retry: ${lastError.message}. Please regenerate manually.`,
+                    type: 'error',
+                  });
+                  throw lastError;
+                }
+              }
+            }
+            
+            // Should never reach here, but TypeScript needs it
+            throw lastError || new Error('Video generation failed');
           };
         });
 
@@ -319,22 +376,42 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
           const successCount = results.filter((r: any) => r !== undefined).length;
 
           console.error(`[useAutoGenerate] Video generation partially failed: ${successCount}/${project.storyboard.length} succeeded`);
+          
+          // Continue with partial success instead of stopping
+          videoResults = results;
+          
+          if (successCount === 0) {
+            // If ALL videos failed, then we should stop
+            addChatMessage({
+              role: 'agent',
+              content: `❌ Video generation failed: No videos generated successfully`,
+              type: 'error',
+            });
+            throw new Error(`Video generation failed: No videos generated successfully`);
+          }
+          
+          // Some videos succeeded, continue with warning
           addChatMessage({
             role: 'agent',
-            content: `⚠️ Video generation completed with errors: ${successCount}/${project.storyboard.length} scenes succeeded`,
+            content: `⚠️ Video generation completed with errors: ${successCount}/${project.storyboard.length} scenes succeeded. Continuing with available videos...`,
             type: 'error',
           });
-
-          // Stop the workflow - we can't proceed with incomplete videos
-          throw new Error(`Video generation failed: Only ${successCount}/${project.storyboard.length} videos generated successfully`);
         }
 
         const successfulVideos = videoResults.filter((r: any) => r !== undefined).length;
-        addChatMessage({
-          role: 'agent',
-          content: `✓ All ${successfulVideos} videos generated`,
-          type: 'status',
-        });
+        if (successfulVideos === project.storyboard.length) {
+          addChatMessage({
+            role: 'agent',
+            content: `✓ All ${successfulVideos} videos generated`,
+            type: 'status',
+          });
+        } else {
+          addChatMessage({
+            role: 'agent',
+            content: `✓ ${successfulVideos}/${project.storyboard.length} videos generated successfully`,
+            type: 'status',
+          });
+        }
 
         // PHASE 3: Extract frames sequentially (fast operation)
         for (let sceneIndex = 0; sceneIndex < project.storyboard.length - 1; sceneIndex++) {
@@ -344,14 +421,30 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
           await extractFramesForScene(sceneIndex);
         }
 
-        console.log(`[useAutoGenerate] ✓ All ${project.storyboard.length} scenes completed`);
+        const completedScenes = successfulVideos;
+        const failedScenes = project.storyboard.length - completedScenes;
+        console.log(`[useAutoGenerate] ✓ ${completedScenes}/${project.storyboard.length} scenes completed`);
 
-        console.log('[useAutoGenerate] Auto-generation completed successfully');
-        addChatMessage({
-          role: 'agent',
-          content: '✨ Auto-generation complete! All scenes have been generated.',
-          type: 'status',
-        });
+        console.log('[useAutoGenerate] Auto-generation completed');
+        if (completedScenes === project.storyboard.length) {
+          addChatMessage({
+            role: 'agent',
+            content: '✨ Auto-generation complete! All scenes have been generated successfully.',
+            type: 'status',
+          });
+        } else {
+          // Find which scenes failed
+          const failedSceneNumbers = project.storyboard
+            .map((_, idx) => idx)
+            .filter(idx => !videoResults[idx])
+            .map(idx => idx + 1);
+          
+          addChatMessage({
+            role: 'agent',
+            content: `✨ Auto-generation complete! ${completedScenes}/${project.storyboard.length} videos generated successfully. Scene${failedScenes > 1 ? 's' : ''} ${failedSceneNumbers.join(', ')} failed after retry and need manual regeneration.`,
+            type: 'error',
+          });
+        }
 
         if (onComplete) {
           onComplete();
@@ -397,6 +490,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
     }, null, 2));
     console.log('='.repeat(80));
     setSceneStatus(sceneIndex, 'generating_image');
+    setGenerationState(sceneIndex, { isGeneratingImage: true });
 
     // Get seed frame from previous scene if available
     let seedFrameUrl: string | undefined;
@@ -471,6 +565,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
     addGeneratedImage(sceneIndex, imageStatus.image);
     selectImage(sceneIndex, imageStatus.image.id);
     setSceneStatus(sceneIndex, 'image_ready');
+    setGenerationState(sceneIndex, { isGeneratingImage: false });
 
     console.log(`[useAutoGenerate] Image generated for scene ${sceneIndex}`);
 
@@ -499,6 +594,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
 
     console.log(`[useAutoGenerate] Generating video for scene ${sceneIndex}`);
     setSceneStatus(sceneIndex, 'generating_video');
+    setGenerationState(sceneIndex, { isGeneratingVideo: true });
 
     const videoResponse = await generateVideo(
       selectedImage.url,
@@ -522,6 +618,7 @@ export function useAutoGenerate(options: UseAutoGenerateOptions = {}) {
     // Update store with video path
     setVideoPath(sceneIndex, completedVideo.videoPath, completedVideo.actualDuration || scene.suggestedDuration);
     setSceneStatus(sceneIndex, 'video_ready');
+    setGenerationState(sceneIndex, { isGeneratingVideo: false });
 
     console.log(`[useAutoGenerate] Video generated for scene ${sceneIndex}`);
   };

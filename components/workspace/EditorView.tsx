@@ -2,7 +2,6 @@
 
 import { useProjectStore, useSceneStore, useUIStore } from '@/lib/state/project-store';
 import VideoPlayer from './VideoPlayer';
-import SeedFrameSelector from './SeedFrameSelector';
 import { Loader2, Image as ImageIcon, Video, CheckCircle2, X, Edit2, Save, X as XIcon, Upload, XCircle, ChevronUp, ChevronDown, Trash2, Copy, Sparkles } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { generateImage, pollImageStatus, generateVideo, pollVideoStatus, uploadImageToS3, extractFrames, uploadImages, deleteGeneratedImage, enhancePrompt } from '@/lib/api-client';
@@ -10,6 +9,9 @@ import { GeneratedImage, SeedFrame } from '@/lib/types';
 import { useMediaDragDrop } from '@/lib/hooks/useMediaDragDrop';
 import { getPublicBackgrounds, getPublicBackgroundUrl, PublicBackground } from '@/lib/backgrounds/public-backgrounds';
 import { selectSceneReferenceImages } from '@/lib/state/slices/project-core-slice';
+import type { GeneratingImage } from '@/lib/state/types';
+import { captureVideoFrame, uploadFrameToS3 } from '@/lib/utils/video-frame-capture';
+import { v4 as uuidv4 } from 'uuid';
 
 interface ImagePreviewModalProps {
   image: GeneratedImage;
@@ -45,12 +47,6 @@ function ImagePreviewModal({ image, isOpen, onClose }: ImagePreviewModalProps) {
   );
 }
 
-interface GeneratingImage {
-  predictionId: string;
-  status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
-  image?: GeneratedImage;
-}
-
 export default function EditorView() {
   const {
     project,
@@ -70,6 +66,9 @@ export default function EditorView() {
     updateSceneVideoPrompt,
     updateSceneSettings,
     duplicateScene,
+    generationStates,
+    setGenerationState,
+    updateGeneratingImages,
   } = useSceneStore();
 
   const {
@@ -81,9 +80,15 @@ export default function EditorView() {
     updateMediaDrawer,
   } = useUIStore();
   
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
-  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
-  const [generatingImages, setGeneratingImages] = useState<GeneratingImage[]>([]);
+  // Get generation state from Zustand store (persisted across navigation)
+  const generationState = generationStates[currentSceneIndex] || {
+    isGeneratingImage: false,
+    isGeneratingVideo: false,
+    generatingImages: [],
+  };
+  const isGeneratingImage = generationState.isGeneratingImage;
+  const isGeneratingVideo = generationState.isGeneratingVideo;
+  const generatingImages = generationState.generatingImages;
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<GeneratedImage | null>(null);
   const [isExtractingFrames, setIsExtractingFrames] = useState(false);
@@ -108,6 +113,7 @@ export default function EditorView() {
   const [publicBackgrounds, setPublicBackgrounds] = useState<PublicBackground[]>([]);
   const imageGenerationRequestIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const videoPlayerRef = useRef<HTMLVideoElement>(null);
 
   const handleDuplicateScene = async () => {
     if (!project || isDuplicating) return;
@@ -439,8 +445,11 @@ export default function EditorView() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
-    setIsGeneratingImage(true);
-    setGeneratingImages([]);
+    // Update generation state in Zustand store
+    setGenerationState(currentSceneIndex, {
+      isGeneratingImage: true,
+      generatingImages: [],
+    });
 
     // Check for selected image BEFORE clearing it (for use as seed)
     const currentSelectedImageBeforeClear = selectedImage || (sceneState?.selectedImageId
@@ -458,7 +467,7 @@ export default function EditorView() {
       predictionId: '',
       status: 'starting',
     }));
-    setGeneratingImages(initialGenerating);
+    updateGeneratingImages(currentSceneIndex, initialGenerating);
 
     try {
       setSceneStatus(currentSceneIndex, 'generating_image');
@@ -647,14 +656,13 @@ export default function EditorView() {
 
             // Update generating state only if not cancelled
             if (!abortController.signal.aborted && imageGenerationRequestIdRef.current === requestId) {
-              setGeneratingImages(prev => {
-                const updated = [...prev];
-                updated[index] = {
-                  predictionId: response.predictionId || '',
-                  status: response.status || 'starting',
-                };
-                return updated;
-              });
+              const currentGenState = generationStates[currentSceneIndex] || { isGeneratingImage: true, isGeneratingVideo: false, generatingImages: [] };
+              const updated = [...currentGenState.generatingImages];
+              updated[index] = {
+                predictionId: response.predictionId || '',
+                status: response.status || 'starting',
+              };
+              updateGeneratingImages(currentSceneIndex, updated);
             }
 
             // Poll for completion
@@ -668,14 +676,13 @@ export default function EditorView() {
                 onProgress: (status) => {
                   // Only update if not cancelled and still the current request
                   if (!abortController.signal.aborted && imageGenerationRequestIdRef.current === requestId) {
-                    setGeneratingImages(prev => {
-                      const updated = [...prev];
-                      updated[index] = {
-                        ...updated[index],
-                        status: status.status === 'canceled' ? 'failed' : status.status,
-                      };
-                      return updated;
-                    });
+                    const currentGenState = generationStates[currentSceneIndex] || { isGeneratingImage: true, isGeneratingVideo: false, generatingImages: [] };
+                    const updated = [...currentGenState.generatingImages];
+                    updated[index] = {
+                      ...updated[index],
+                      status: status.status === 'canceled' ? 'failed' : status.status,
+                    };
+                    updateGeneratingImages(currentSceneIndex, updated);
                   }
                 },
               }
@@ -697,15 +704,14 @@ export default function EditorView() {
                 setSelectedImageId(currentSelectedImageBeforeClear.id);
               }
 
-              setGeneratingImages(prev => {
-                const updated = [...prev];
-                updated[index] = {
-                  ...updated[index],
-                  status: 'succeeded',
-                  image: statusResponse.image,
-                };
-                return updated;
-              });
+              const currentGenState = generationStates[currentSceneIndex] || { isGeneratingImage: true, isGeneratingVideo: false, generatingImages: [] };
+              const updated = [...currentGenState.generatingImages];
+              updated[index] = {
+                ...updated[index],
+                status: 'succeeded',
+                image: statusResponse.image,
+              };
+              updateGeneratingImages(currentSceneIndex, updated);
 
               // Success - exit retry loop
               return;
@@ -744,14 +750,13 @@ export default function EditorView() {
           }
 
           console.error(`[EditorView] Failed to generate image ${index + 1}:`, error);
-          setGeneratingImages(prev => {
-            const updated = [...prev];
-            updated[index] = {
-              ...updated[index],
-              status: 'failed',
-            };
-            return updated;
-          });
+          const currentGenState = generationStates[currentSceneIndex] || { isGeneratingImage: true, isGeneratingVideo: false, generatingImages: [] };
+          const updated = [...currentGenState.generatingImages];
+          updated[index] = {
+            ...updated[index],
+            status: 'failed',
+          };
+          updateGeneratingImages(currentSceneIndex, updated);
         }
       });
 
@@ -772,7 +777,7 @@ export default function EditorView() {
     } finally {
       // Only clear loading state if this is still the current request
       if (imageGenerationRequestIdRef.current === requestId) {
-        setIsGeneratingImage(false);
+        setGenerationState(currentSceneIndex, { isGeneratingImage: false });
         abortControllerRef.current = null;
       }
     }
@@ -804,7 +809,7 @@ export default function EditorView() {
       return;
     }
 
-    setIsGeneratingVideo(true);
+    setGenerationState(currentSceneIndex, { isGeneratingVideo: true });
 
     // Set debounce timeout to prevent rapid re-clicks
     videoGenerationTimeoutRef.current = setTimeout(() => {
@@ -814,50 +819,65 @@ export default function EditorView() {
     try {
       setSceneStatus(currentSceneIndex, 'generating_video');
 
+      // In reference images mode (for Google Veo), first frame is not required
+      // The model will generate video using only the reference images
+      const isReferenceMode = imageInputMode === 'reference';
+      
       // Use the First Frame slot (customImagePreviews[0]) for video generation
       // This allows users to manually drag in the image they want to use
       const firstFramePreview = customImagePreviews[0];
-      if (!firstFramePreview) {
+      if (!firstFramePreview && !isReferenceMode) {
         throw new Error('Please drag an image to the First Frame slot to generate video');
       }
 
       let imageToUse: string;
-      if (firstFramePreview.source === 'file') {
-        // If it's a file, we need to find it in customImageFiles
-        const fileIndex = customImagePreviews.slice(0, 1).filter(p => p?.source === 'file').length - 1;
-        const file = customImageFiles[fileIndex];
-        if (!file) {
-          throw new Error('First Frame file not found. Please try uploading again.');
-        }
-        // Upload the file first
-        const uploadResult = await uploadImages([file], project.id, false);
-        if (!uploadResult.images || uploadResult.images.length === 0) {
-          throw new Error('Failed to upload First Frame image');
-        }
-        imageToUse = uploadResult.images[0].url;
-      } else if (firstFramePreview.url.startsWith('http://') || firstFramePreview.url.startsWith('https://')) {
-        imageToUse = firstFramePreview.url;
-      } else if (firstFramePreview.url.startsWith('/api/serve-image')) {
-        // Extract the local path
-        imageToUse = decodeURIComponent(firstFramePreview.url.split('path=')[1]);
-      } else {
-        imageToUse = firstFramePreview.url;
-      }
-
-      console.log(`[EditorView] Scene ${currentSceneIndex}: Using First Frame slot for video generation`);
-      console.log('[EditorView] First Frame path:', imageToUse.substring(0, 100) + (imageToUse.length > 100 ? '...' : ''));
-
-      // Upload image to S3 if it's a local path, otherwise use the URL directly
       let s3Url: string;
-      if (imageToUse.startsWith('http://') || imageToUse.startsWith('https://')) {
-        // Already a public URL, use it directly
-        s3Url = imageToUse;
-        console.log('[EditorView] Image is already a public URL, using directly:', s3Url.substring(0, 80) + '...');
+
+      if (isReferenceMode && !firstFramePreview) {
+        // Reference-only mode: No first frame needed
+        s3Url = ''; // Empty string, will not be used by generator
+        console.log('[EditorView] Reference Images Mode: No first frame required');
+      } else if (firstFramePreview) {
+        // Standard/Frame mode: Process first frame
+        if (firstFramePreview.source === 'file') {
+          // If it's a file, we need to find it in customImageFiles
+          const fileIndex = customImagePreviews.slice(0, 1).filter(p => p?.source === 'file').length - 1;
+          const file = customImageFiles[fileIndex];
+          if (!file) {
+            throw new Error('First Frame file not found. Please try uploading again.');
+          }
+          // Upload the file first
+          const uploadResult = await uploadImages([file], project.id, false);
+          if (!uploadResult.images || uploadResult.images.length === 0) {
+            throw new Error('Failed to upload First Frame image');
+          }
+          imageToUse = uploadResult.images[0].url;
+        } else if (firstFramePreview.url.startsWith('http://') || firstFramePreview.url.startsWith('https://')) {
+          imageToUse = firstFramePreview.url;
+        } else if (firstFramePreview.url.startsWith('/api/serve-image')) {
+          // Extract the local path
+          imageToUse = decodeURIComponent(firstFramePreview.url.split('path=')[1]);
+        } else {
+          imageToUse = firstFramePreview.url;
+        }
+
+        console.log(`[EditorView] Scene ${currentSceneIndex}: Using First Frame slot for video generation`);
+        console.log('[EditorView] First Frame path:', imageToUse.substring(0, 100) + (imageToUse.length > 100 ? '...' : ''));
+
+        // Upload image to S3 if it's a local path, otherwise use the URL directly
+        if (imageToUse.startsWith('http://') || imageToUse.startsWith('https://')) {
+          // Already a public URL, use it directly
+          s3Url = imageToUse;
+          console.log('[EditorView] Image is already a public URL, using directly:', s3Url.substring(0, 80) + '...');
+        } else {
+          // Local path, upload to S3
+          const uploadResult = await uploadImageToS3(imageToUse, project.id);
+          s3Url = uploadResult.s3Url;
+          console.log('[EditorView] Uploaded image to S3:', s3Url.substring(0, 80) + '...');
+        }
       } else {
-        // Local path, upload to S3
-        const uploadResult = await uploadImageToS3(imageToUse, project.id);
-        s3Url = uploadResult.s3Url;
-        console.log('[EditorView] Uploaded image to S3:', s3Url.substring(0, 80) + '...');
+        // Should not reach here
+        s3Url = '';
       }
 
       // Handle two mutually exclusive modes:
@@ -964,10 +984,11 @@ export default function EditorView() {
 
       // Generate video
       // Get model parameters from current scene and add last_frame if provided
-      // NOTE: last_frame and reference images are mutually exclusive
+      // Add useReferenceMode flag when in reference mode (for Google Veo)
       const modelParameters = {
         ...(currentScene.modelParameters || {}),
         ...(lastFrameUrl ? { last_frame: lastFrameUrl } : {}),
+        ...(isReferenceMode ? { useReferenceMode: true } : {}),
       };
 
       console.log('[EditorView] Video generation mode:',
@@ -1100,7 +1121,7 @@ export default function EditorView() {
         type: 'error',
       });
     } finally {
-      setIsGeneratingVideo(false);
+      setGenerationState(currentSceneIndex, { isGeneratingVideo: false });
     }
   };
 
@@ -1890,63 +1911,45 @@ export default function EditorView() {
                 </div>
               </div>
 
-              {/* Save Last Frame Button */}
+              {/* Save Current Frame Button */}
               {sceneHasVideo && (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={async () => {
-                      if (!project?.id || !sceneState?.videoLocalPath) return;
+                      if (!project?.id || !videoPlayerRef.current) return;
 
                       setIsExtractingFrames(true);
                       try {
-                        const videoPath = sceneState.videoLocalPath;
+                        // Capture current frame from video player using canvas
+                        const frameBlob = await captureVideoFrame(videoPlayerRef.current);
 
-                        // Check if video path is a URL or local path
-                        if (videoPath.startsWith('http://') || videoPath.startsWith('https://')) {
-                          addChatMessage({
-                            role: 'agent',
-                            content: '❌ Cannot extract frame from URL. Please wait for video to download.',
-                            type: 'error',
-                          });
-                          return;
-                        }
+                        // Upload to S3
+                        const { s3Url, s3Key, preSignedUrl } = await uploadFrameToS3(frameBlob, project.id);
 
-                        // Extract frames
-                        const response = await extractFrames(
-                          videoPath,
-                          project.id,
-                          currentSceneIndex
-                        );
+                        // Create seed frame object
+                        const capturedFrame: SeedFrame = {
+                          id: uuidv4(),
+                          url: s3Url,
+                          localPath: '', // No local path - frame is only on S3
+                          s3Key,
+                          timestamp: videoPlayerRef.current.currentTime,
+                        };
 
-                        if (response.frames && response.frames.length > 0) {
-                          // Get the last frame
-                          const lastFrame = response.frames[response.frames.length - 1];
+                        // Add to seed frames (prepend to existing)
+                        setSeedFrames(currentSceneIndex, [capturedFrame, ...(seedFrames || [])]);
 
-                          // Upload to S3
-                          const { s3Url } = await uploadImageToS3(lastFrame.url, project.id);
-
-                          const uploadedFrame = {
-                            ...lastFrame,
-                            url: s3Url,
-                            localPath: lastFrame.url,
-                          };
-
-                          // Add to seed frames (prepend to existing)
-                          setSeedFrames(currentSceneIndex, [uploadedFrame, ...(seedFrames || [])]);
-
-                          addChatMessage({
-                            role: 'agent',
-                            content: '✓ Last frame saved to seed frames',
-                            type: 'status',
-                          });
-                        }
-                      } catch (error) {
-                        console.error('Error saving last frame:', error);
                         addChatMessage({
                           role: 'agent',
-                          content: '❌ Failed to save last frame',
+                          content: '✓ Current frame saved to seed frames',
+                          type: 'status',
+                        });
+                      } catch (error) {
+                        console.error('Error saving current frame:', error);
+                        addChatMessage({
+                          role: 'agent',
+                          content: '❌ Failed to save current frame',
                           type: 'error',
-                          });
+                        });
                       } finally {
                         setIsExtractingFrames(false);
                       }
@@ -1962,7 +1965,7 @@ export default function EditorView() {
                     ) : (
                       <>
                         <Save className="w-4 h-4" />
-                        Save last frame
+                        Save current frame
                       </>
                     )}
                   </button>
@@ -2341,6 +2344,7 @@ export default function EditorView() {
               {/* Video Preview */}
               <div className="relative">
                 <VideoPlayer
+                  ref={videoPlayerRef}
                   src={sceneState?.videoLocalPath ? (
                     sceneState.videoLocalPath.startsWith('http://') || sceneState.videoLocalPath.startsWith('https://')
                       ? sceneState.videoLocalPath
@@ -2367,17 +2371,6 @@ export default function EditorView() {
                   )}
                 </button>
               </div>
-
-              {/* Seed Frame Selection */}
-              {seedFrames.length > 0 && currentSceneIndex < 4 && (
-                <div className="p-4 bg-white/5 rounded-lg border border-white/20">
-                  <SeedFrameSelector
-                    frames={seedFrames}
-                    selectedFrameIndex={sceneState?.selectedSeedFrameIndex}
-                    onSelectFrame={handleSelectSeedFrame}
-                  />
-                </div>
-              )}
 
               {/* Continue Button */}
               <button

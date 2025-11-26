@@ -9,6 +9,7 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
   isWorkflowPaused: false,
   processingSceneIndex: null,
   sceneErrors: {},
+  generationStates: {},
 
   updateScenePrompt: (sceneIndex, imagePrompt) => {
     set((state) => {
@@ -627,18 +628,27 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
             ...currentState.project.storyboard.slice(sceneIndex + 1),
           ];
 
-          // Sort storyboard by sceneNumber
-          updatedStoryboard.sort((a, b) => a.order - b.order);
+          // Renumber ALL scenes sequentially (0, 1, 2, 3...)
+          updatedStoryboard.forEach((s, idx) => {
+            s.order = idx;
+          });
 
           // Create scene state for the duplicated scene
+          const duplicatedImages = response.duplicatedImages || [];
+          const duplicatedVideos = response.duplicatedVideos || [];
+          
+          // Find selected image/video (marked as isSelected) or fallback to first one
+          const selectedImage = duplicatedImages.find(img => img.isSelected) || duplicatedImages[0];
+          const selectedVideo = duplicatedVideos.find(vid => vid.isSelected) || duplicatedVideos[0];
+          
           const duplicatedSceneState: any = {
             ...duplicatedScene,
-            generatedImages: response.duplicatedImages || [],
-            selectedImageId: response.duplicatedImages?.[0]?.id,
-            generatedVideos: response.duplicatedVideos || [],
-            selectedVideoId: response.duplicatedVideos?.[0]?.id,
-            videoLocalPath: response.duplicatedVideos?.[0]?.localPath,
-            actualDuration: response.duplicatedVideos?.[0]?.actualDuration,
+            generatedImages: duplicatedImages,
+            selectedImageId: selectedImage?.id,
+            generatedVideos: duplicatedVideos,
+            selectedVideoId: selectedVideo?.id,
+            videoLocalPath: selectedVideo?.localPath,
+            actualDuration: selectedVideo?.actualDuration,
             seedFrames: response.duplicatedSeedFrames || [],
             selectedSeedFrameIndex: sceneState.selectedSeedFrameIndex,
             status: 'pending',
@@ -651,6 +661,11 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
             ...currentState.scenes.slice(sceneIndex + 1),
           ];
 
+          // Renumber ALL scene states to match
+          updatedScenes.forEach((s, idx) => {
+            s.order = idx;
+          });
+
           return {
             project: {
               ...currentState.project,
@@ -659,6 +674,9 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
             scenes: updatedScenes,
           };
         });
+
+        // Rebuild timeline with new scene order
+        get().initializeTimelineClips();
 
         return response.duplicatedScene;
       } catch (error) {
@@ -672,36 +690,11 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
     {
       const { v4: uuidv4 } = await import('uuid');
 
-      // Get the base scene number (the integer part of the order)
-      // For scene.order = 0 (Scene 1), baseSceneNumber = 0
-      // For scene.order = 1 (Scene 2), baseSceneNumber = 1
-      const baseSceneNumber = Math.floor(scene.order);
-
-      // Find existing duplicates with the same base number
-      // For Scene 1 (order=0), we look for scenes with order between 0 and 1 (exclusive of 0)
-      const existingDuplicates = state.project.storyboard.filter(
-        s => {
-          const sBase = Math.floor(s.order);
-          return sBase === baseSceneNumber && s.order !== baseSceneNumber;
-        }
-      );
-
-      let newSceneNumber: number;
-      if (existingDuplicates.length === 0) {
-        // First duplicate: Scene 1 (0) -> Scene 1.1 (0.1)
-        newSceneNumber = baseSceneNumber + 0.1;
-      } else {
-        // Find the highest sub-number and increment
-        const maxOrder = Math.max(...existingDuplicates.map(s => s.order));
-        const lastSubNumber = Math.round((maxOrder - baseSceneNumber) * 10);
-        newSceneNumber = baseSceneNumber + (lastSubNumber + 1) / 10;
-      }
-
       const duplicatedScene = {
         ...scene,
         id: uuidv4(),
-        order: newSceneNumber,
-        description: `${scene.description} (Copy)`,
+        order: sceneIndex + 1, // Will be renumbered below
+        description: scene.description,
       };
 
       // Copy all generated content from the original scene
@@ -729,8 +722,10 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
           ...currentState.project.storyboard.slice(sceneIndex + 1),
         ];
 
-        // Sort storyboard by order
-        updatedStoryboard.sort((a, b) => a.order - b.order);
+        // Renumber ALL scenes sequentially (0, 1, 2, 3...)
+        updatedStoryboard.forEach((s, idx) => {
+          s.order = idx;
+        });
 
         // Insert into scenes array at the same position
         const updatedScenes = [
@@ -738,6 +733,11 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
           duplicatedSceneState,
           ...currentState.scenes.slice(sceneIndex + 1),
         ];
+
+        // Renumber ALL scene states to match
+        updatedScenes.forEach((s, idx) => {
+          s.order = idx;
+        });
 
         return {
           project: {
@@ -748,8 +748,51 @@ export const createSceneSlice: StateCreator<ProjectStore, [], [], SceneSlice> = 
         };
       });
 
+      // Rebuild timeline with new scene order
+      get().initializeTimelineClips();
+
       return duplicatedScene;
     }
+  },
+
+  setGenerationState: (sceneIndex, state) => {
+    set((currentState) => ({
+      generationStates: {
+        ...currentState.generationStates,
+        [sceneIndex]: {
+          ...(currentState.generationStates[sceneIndex] || {
+            isGeneratingImage: false,
+            isGeneratingVideo: false,
+            generatingImages: [],
+          }),
+          ...state,
+        },
+      },
+    }));
+  },
+
+  clearGenerationState: (sceneIndex) => {
+    set((currentState) => {
+      const newStates = { ...currentState.generationStates };
+      delete newStates[sceneIndex];
+      return { generationStates: newStates };
+    });
+  },
+
+  updateGeneratingImages: (sceneIndex, images) => {
+    set((currentState) => ({
+      generationStates: {
+        ...currentState.generationStates,
+        [sceneIndex]: {
+          ...(currentState.generationStates[sceneIndex] || {
+            isGeneratingImage: false,
+            isGeneratingVideo: false,
+            generatingImages: [],
+          }),
+          generatingImages: images,
+        },
+      },
+    }));
   },
 });
 

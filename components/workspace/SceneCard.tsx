@@ -1,7 +1,7 @@
 'use client';
 
 import { Scene } from '@/lib/types';
-import { CheckCircle2, Loader2, AlertCircle, Image as ImageIcon, Video, Copy } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertCircle, Image as ImageIcon, Video, Copy, ArrowLeft, ArrowRight } from 'lucide-react';
 import { useProjectStore } from '@/lib/state/project-store';
 import { generateImage, pollImageStatus, generateVideo, pollVideoStatus } from '@/lib/api-client';
 import { ImageGenerationRequest } from '@/lib/types';
@@ -19,6 +19,7 @@ import {
 interface SceneCardProps {
   scene: Scene;
   sceneIndex: number;
+  totalScenes: number;
   status?: 'pending' | 'generating_image' | 'image_ready' | 'generating_video' | 'video_ready' | 'completed';
   isSelected?: boolean;
   onClick?: () => void;
@@ -27,6 +28,7 @@ interface SceneCardProps {
 export default function SceneCard({
   scene,
   sceneIndex,
+  totalScenes,
   status = 'pending',
   isSelected = false,
   onClick,
@@ -46,6 +48,7 @@ export default function SceneCard({
     retrySceneGeneration,
     clearSceneError,
     duplicateScene,
+    moveScene,
   } = useProjectStore();
   const [isGenerating, setIsGenerating] = useState(false);
   const sceneError = sceneErrors[sceneIndex];
@@ -192,7 +195,7 @@ export default function SceneCard({
       setSceneStatus(sceneIndex, 'generating_image');
       addChatMessage({
         role: 'agent',
-        content: `Generating image for Scene ${sceneIndex + 1}/5...`,
+        content: `Generating image for Scene ${sceneIndex + 1}/${totalScenes}...`,
         type: 'status',
       });
 
@@ -523,6 +526,27 @@ export default function SceneCard({
     }
   };
 
+  const handleMoveScene = (e: React.MouseEvent, direction: 'up' | 'down') => {
+    e.stopPropagation();
+    if (!project || isGenerating) return;
+
+    try {
+      moveScene(sceneIndex, direction);
+      addChatMessage({
+        role: 'agent',
+        content: `✓ Scene ${sceneIndex + 1} moved ${direction}`,
+        type: 'status',
+      });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to move scene';
+      addChatMessage({
+        role: 'agent',
+        content: `❌ Error: ${errorMessage}`,
+        type: 'error',
+      });
+    }
+  };
+
   const handleGenerateVideo = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!project || isGenerating) return;
@@ -546,7 +570,7 @@ export default function SceneCard({
       setSceneStatus(sceneIndex, 'generating_video');
       addChatMessage({
         role: 'agent',
-        content: `Generating video for Scene ${sceneIndex + 1}/5...`,
+        content: `Generating video for Scene ${sceneIndex + 1}/${totalScenes}...`,
         type: 'status',
       });
 
@@ -733,6 +757,26 @@ export default function SceneCard({
         </div>
       )}
       
+      {/* Scene Reorder Buttons - Bottom Center */}
+      <div className="mt-2 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={(e) => handleMoveScene(e, 'up')}
+          disabled={isGenerating || sceneIndex === 0}
+          className="w-6 h-6 rounded-full bg-white/20 text-white flex items-center justify-center hover:bg-white/30 disabled:opacity-30 disabled:cursor-not-allowed transition-all border border-white/20 shadow-sm"
+          title="Move scene left"
+        >
+          <ArrowLeft className="w-3 h-3" />
+        </button>
+        <button
+          onClick={(e) => handleMoveScene(e, 'down')}
+          disabled={isGenerating || sceneIndex === totalScenes - 1}
+          className="w-6 h-6 rounded-full bg-white/20 text-white flex items-center justify-center hover:bg-white/30 disabled:opacity-30 disabled:cursor-not-allowed transition-all border border-white/20 shadow-sm"
+          title="Move scene right"
+        >
+          <ArrowRight className="w-3 h-3" />
+        </button>
+      </div>
+      
       {/* Thumbnail Preview */}
       {(() => {
         const sceneState = scenes[sceneIndex];
@@ -743,8 +787,17 @@ export default function SceneCard({
           return null;
         }
 
-        const imageUrl = formatImageUrl(sceneState.generatedImages[0]);
-        console.log(`[SceneCard ${sceneIndex}] Image URL:`, imageUrl);
+        const firstImage = sceneState.generatedImages[0];
+        console.log(`[SceneCard ${sceneIndex}] First image object:`, { id: firstImage.id, url: firstImage.url?.substring(0, 80), localPath: firstImage.localPath?.substring(0, 80), s3Key: firstImage.s3Key?.substring(0, 80) });
+        
+        const imageUrl = formatImageUrl(firstImage);
+        console.log(`[SceneCard ${sceneIndex}] Formatted image URL:`, imageUrl);
+
+        // Don't render if formatImageUrl returned empty string
+        if (!imageUrl) {
+          console.error(`[SceneCard ${sceneIndex}] formatImageUrl returned empty string for image:`, firstImage);
+          return null;
+        }
 
         return (
           <div className="mt-2 rounded overflow-hidden border border-white/20">
