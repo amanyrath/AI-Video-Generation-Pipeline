@@ -76,7 +76,26 @@ export async function POST(request: NextRequest) {
     // Check authentication
     const session = await getSession();
 
+    // Debug authentication
+    console.log('[AUTH DEBUG]', {
+      sessionExists: !!session,
+      sessionUser: !!session?.user,
+      hasUserId: !!session?.user?.id,
+      userId: session?.user?.id,
+      email: session?.user?.email,
+      cookieHeader: request.headers.get('cookie'),
+      hasNextAuthCookie: request.headers.get('cookie')?.includes('next-auth'),
+    });
+
     if (!session?.user?.id) {
+      // Log why auth failed
+      if (!session) {
+        console.error('[AUTH FAIL] No session - JWT token missing or invalid');
+      } else if (!session.user) {
+        console.error('[AUTH FAIL] Session exists but no user object');
+      } else if (!session.user.id) {
+        console.error('[AUTH FAIL] Session.user exists but missing id');
+      }
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -193,11 +212,30 @@ export async function POST(request: NextRequest) {
  *
  * Health check endpoint to verify the API is working.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   // Check authentication
   const session = await getSession();
 
+  // Debug authentication
+  console.log('[AUTH DEBUG]', {
+    sessionExists: !!session,
+    sessionUser: !!session?.user,
+    hasUserId: !!session?.user?.id,
+    userId: session?.user?.id,
+    email: session?.user?.email,
+    cookieHeader: request.headers.get('cookie'),
+    hasNextAuthCookie: request.headers.get('cookie')?.includes('next-auth'),
+  });
+
   if (!session?.user?.id) {
+    // Log why auth failed
+    if (!session) {
+      console.error('[AUTH FAIL] No session - JWT token missing or invalid');
+    } else if (!session.user) {
+      console.error('[AUTH FAIL] Session exists but no user object');
+    } else if (!session.user.id) {
+      console.error('[AUTH FAIL] Session.user exists but missing id');
+    }
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

@@ -839,17 +839,25 @@ export const createProjectCoreSlice: StateCreator<ProjectStore, [], [], ProjectC
                 };
               });
 
-              // Persist to database if scene has an ID
-              if (scene.id) {
+              // Persist to database if scene has an ID and project is saved
+              // Note: Scenes only exist in database after setStoryboard is called
+              if (scene.id && currentState.project?.id) {
                 import('@/lib/api-client').then(({ updateScene }) => {
                   updateScene(scene.id, { referenceImageUrls: selectedUrls })
                     .then(() => {
                       console.log(`[setUploadedImages] ✅ Persisted ${selectedUrls.length} references for scene ${index + 1} to database`);
                     })
                     .catch((error) => {
-                      console.error(`[setUploadedImages] ❌ Failed to persist references for scene ${index + 1}:`, error);
+                      // Scene might not exist in database yet (P2025 error) - this is expected
+                      if (error.message?.includes('No record was found') || error.message?.includes('P2025')) {
+                        console.warn(`[setUploadedImages] Scene ${index + 1} not yet persisted to database - will sync later`);
+                      } else {
+                        console.error(`[setUploadedImages] ❌ Failed to persist references for scene ${index + 1}:`, error);
+                      }
                     });
                 });
+              } else {
+                console.log(`[setUploadedImages] Scene ${index + 1} - Skipping database persist (no ID or project not saved)`);
               }
             }
 

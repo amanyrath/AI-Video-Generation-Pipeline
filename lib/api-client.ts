@@ -80,6 +80,31 @@ export interface APIError {
 }
 
 /**
+ * Converts a Response error to an Error object while preserving status code
+ */
+function createErrorFromResponse(
+  response: Response,
+  defaultMessage: string,
+): Error {
+  // Try to extract error message from JSON response
+  return response
+    .json()
+    .then((errorData) => {
+      const error = new Error(errorData.error || defaultMessage);
+      (error as any).status = response.status;
+      (error as any).response = response;
+      return error;
+    })
+    .catch(() => {
+      // If JSON parsing fails, create error with status code
+      const error = new Error(defaultMessage);
+      (error as any).status = response.status;
+      (error as any).response = response;
+      return error;
+    });
+}
+
+/**
  * Create structured error from various error types
  */
 function createAPIError(
@@ -96,9 +121,14 @@ function createAPIError(
   }
 
   if (error instanceof Error) {
+    // Check if error has status code attached (from Response conversion)
+    const statusCode = (error as any).status;
     return {
       message: error.message,
-      retryable: false,
+      statusCode,
+      retryable: statusCode !== undefined 
+        ? [408, 429, 500, 502, 503, 504].includes(statusCode)
+        : false,
       context,
     };
   }
@@ -142,10 +172,19 @@ async function retryRequest<T>(
       }
 
       // Check if error is retryable
+      // Don't retry on non-retryable status codes (401, 403, 404, etc.)
       if (error instanceof Response) {
         if (!config.retryableStatusCodes.includes(error.status)) {
           throw lastError;
         }
+      } else if (lastError.statusCode !== undefined) {
+        // Error was converted from Response - check status code
+        if (!config.retryableStatusCodes.includes(lastError.statusCode)) {
+          throw lastError;
+        }
+      } else if (!lastError.retryable) {
+        // Error object with retryable flag set to false
+        throw lastError;
       }
 
       // Log error for debugging (Phase 6.1.2)
@@ -203,10 +242,7 @@ export async function generateStoryboard(
       });
 
       if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Failed to generate storyboard" }));
-        throw new Error(error.error || "Failed to generate storyboard");
+        throw await createErrorFromResponse(response, "Failed to generate storyboard");
       }
 
       return response.json();
@@ -292,10 +328,7 @@ export async function uploadImages(
       });
 
       if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Failed to upload images" }));
-        throw new Error(error.error || "Failed to upload images");
+        throw await createErrorFromResponse(response, "Failed to upload images");
       }
 
       const result = await response.json();
@@ -366,10 +399,7 @@ export async function generateImage(
       });
 
       if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Failed to generate image" }));
-        throw new Error(error.error || "Failed to generate image");
+        throw await createErrorFromResponse(response, "Failed to generate image");
       }
 
       return response.json();
@@ -568,10 +598,7 @@ export async function generateVideo(
       });
 
       if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Failed to generate video" }));
-        throw new Error(error.error || "Failed to generate video");
+        throw await createErrorFromResponse(response, "Failed to generate video");
       }
 
       const result = await response.json();
@@ -716,10 +743,7 @@ export async function extractFrames(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to extract frames" }));
-      throw new Error(error.error || "Failed to extract frames");
+      throw await createErrorFromResponse(response, "Failed to extract frames");
     }
 
     const result = await response.json();
@@ -756,10 +780,7 @@ export async function stitchVideos(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to stitch videos" }));
-      throw new Error(error.error || "Failed to stitch videos");
+      throw await createErrorFromResponse(response, "Failed to stitch videos");
     }
 
     const result = await response.json();
@@ -871,10 +892,7 @@ export async function generatePreview(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to generate preview" }));
-      throw new Error(error.error || "Failed to generate preview");
+      throw await createErrorFromResponse(response, "Failed to generate preview");
     }
 
     const result = await response.json();
@@ -909,10 +927,7 @@ export async function uploadImageToS3(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to upload image to S3" }));
-      throw new Error(error.error || "Failed to upload image to S3");
+      throw await createErrorFromResponse(response, "Failed to upload image to S3");
     }
 
     const data = await response.json();
@@ -935,7 +950,7 @@ export async function fetchProjects(
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch projects: ${response.statusText}`);
+        throw await createErrorFromResponse(response, "Failed to fetch projects");
       }
 
       const data = await response.json();
@@ -973,10 +988,7 @@ export async function saveProject(
       });
 
       if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Failed to create project" }));
-        throw new Error(error.error || "Failed to create project");
+        throw await createErrorFromResponse(response, "Failed to create project");
       }
 
       const data = await response.json();
@@ -1011,10 +1023,7 @@ export async function updateProject(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to update project" }));
-      throw new Error(error.error || "Failed to update project");
+      throw await createErrorFromResponse(response, "Failed to update project");
     }
 
     const data = await response.json();
@@ -1033,10 +1042,7 @@ export async function loadProject(projectId: string): Promise<any> {
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to load project" }));
-      throw new Error(error.error || "Project not found");
+      throw await createErrorFromResponse(response, "Project not found");
     }
 
     const data = await response.json();
@@ -1055,10 +1061,7 @@ export async function deleteProject(projectId: string): Promise<void> {
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to delete project" }));
-      throw new Error(error.error || "Failed to delete project");
+      throw await createErrorFromResponse(response, "Failed to delete project");
     }
   });
 }
@@ -1082,10 +1085,7 @@ export async function deleteGeneratedImage(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to delete image" }));
-      throw new Error(error.error || "Failed to delete image");
+      throw await createErrorFromResponse(response, "Failed to delete image");
     }
 
     return response.json();
@@ -1135,10 +1135,7 @@ export async function generateComposite(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to generate composite" }));
-      throw new Error(error.error || "Failed to generate composite");
+      throw await createErrorFromResponse(response, "Failed to generate composite");
     }
 
     return response.json();
@@ -1173,10 +1170,7 @@ export async function duplicateScene(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to duplicate scene" }));
-      throw new Error(error.error || "Failed to duplicate scene");
+      throw await createErrorFromResponse(response, "Failed to duplicate scene");
     }
 
     return response.json();
@@ -1224,10 +1218,7 @@ export async function enhancePrompt(
       });
 
       if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Failed to enhance prompt" }));
-        throw new Error(error.error || "Failed to enhance prompt");
+        throw await createErrorFromResponse(response, "Failed to enhance prompt");
       }
 
       return response.json();
@@ -1308,10 +1299,7 @@ export async function generateMusicTrack(
     });
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to generate music" }));
-      throw new Error(error.error || "Failed to generate music");
+      throw await createErrorFromResponse(response, "Failed to generate music");
     }
 
     return response.json();
@@ -1332,10 +1320,7 @@ export async function getTextOverlays(projectId: string): Promise<any[]> {
     );
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to get text overlays" }));
-      throw new Error(error.error || "Failed to get text overlays");
+      throw await createErrorFromResponse(response, "Failed to get text overlays");
     }
 
     const data = await response.json();
@@ -1364,10 +1349,7 @@ export async function createTextOverlay(
     );
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to create text overlay" }));
-      throw new Error(error.error || "Failed to create text overlay");
+      throw await createErrorFromResponse(response, "Failed to create text overlay");
     }
 
     const data = await response.json();
@@ -1397,10 +1379,7 @@ export async function updateTextOverlay(
     );
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to update text overlay" }));
-      throw new Error(error.error || "Failed to update text overlay");
+      throw await createErrorFromResponse(response, "Failed to update text overlay");
     }
 
     const data = await response.json();
@@ -1425,10 +1404,7 @@ export async function deleteTextOverlay(
     );
 
     if (!response.ok) {
-      const error = await response
-        .json()
-        .catch(() => ({ error: "Failed to delete text overlay" }));
-      throw new Error(error.error || "Failed to delete text overlay");
+      throw await createErrorFromResponse(response, "Failed to delete text overlay");
     }
   });
 }
@@ -1595,10 +1571,7 @@ export async function generateNarration(
       });
 
       if (!response.ok) {
-        const error = await response
-          .json()
-          .catch(() => ({ error: "Failed to generate narration" }));
-        throw new Error(error.error || "Failed to generate narration");
+        throw await createErrorFromResponse(response, "Failed to generate narration");
       }
 
       return response.json();
@@ -1645,8 +1618,7 @@ export async function createScenes(
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to create scenes' }));
-      throw new Error(error.error || 'Failed to create scenes');
+      throw await createErrorFromResponse(response, 'Failed to create scenes');
     }
 
     return response.json();
@@ -1671,8 +1643,7 @@ export async function updateScene(
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to update scene' }));
-      throw new Error(error.error || 'Failed to update scene');
+      throw await createErrorFromResponse(response, 'Failed to update scene');
     }
 
     return response.json();

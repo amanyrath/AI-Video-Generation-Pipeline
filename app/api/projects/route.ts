@@ -7,7 +7,16 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
 
+    // Debug logging
+    console.log('=== /api/projects GET DEBUG ===');
+    console.log('Session exists:', !!session);
+    console.log('Session user exists:', !!session?.user);
+    console.log('Session user ID:', session?.user?.id);
+    console.log('Full session:', JSON.stringify(session, null, 2));
+    console.log('============================');
+
     if (!session?.user?.id) {
+      console.log('❌ Authorization failed: No session.user.id');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
