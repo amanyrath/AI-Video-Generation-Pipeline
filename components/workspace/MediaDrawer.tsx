@@ -197,16 +197,6 @@ export default function MediaDrawer() {
         });
       });
     });
-    console.log('[MediaDrawer] Generated images loaded:', {
-      totalImages: allImages.length,
-      totalScenes: scenes.length,
-      byScene: scenes.map((s, i) => ({ 
-        scene: i, 
-        count: s.generatedImages?.length || 0,
-        images: s.generatedImages?.map(img => ({ id: img.id, url: img.url?.substring(0, 80) })) || []
-      })),
-      allImagesDetails: allImages.map(img => ({ id: img.id, sceneIndex: img.sceneIndex, url: img.url?.substring(0, 80) }))
-    });
     return allImages;
   }, [scenes]);
 
@@ -1031,6 +1021,36 @@ export default function MediaDrawer() {
             }}
             className="absolute bottom-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-full transition-colors border border-red-400/50"
             title="Remove media"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+
+        {/* Clear Seed Image Button (for purple-highlighted items) */}
+        {isSeed && !showRemoveButton && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              // Clear the seed image by updating media drawer
+              useProjectStore.getState().updateMediaDrawer({ seedImageId: null });
+            }}
+            className="absolute bottom-2 right-2 p-1.5 bg-violet-500/80 hover:bg-violet-600 text-white rounded-full transition-colors border border-violet-400/50 opacity-0 group-hover:opacity-100"
+            title="Remove seed image"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+
+        {/* Clear Reference Image Button (for yellow-highlighted items) */}
+        {isSelected && !isSeed && !showRemoveButton && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              // Remove from selected items
+              useProjectStore.getState().deselectMediaItem(item.id);
+            }}
+            className="absolute bottom-2 right-2 p-1.5 bg-yellow-500/80 hover:bg-yellow-600 text-white rounded-full transition-colors border border-yellow-400/50 opacity-0 group-hover:opacity-100"
+            title="Remove reference image"
           >
             <X className="w-3 h-3" />
           </button>
